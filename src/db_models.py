@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase
 import csv
 from io import StringIO
 from sqlalchemy import inspect, or_, MetaData
@@ -15,8 +16,13 @@ naming_convention = {
     "pk": "pk_%(table_name)s",
 }
 
-# Initialize SQLAlchemy to make a reference object for main application and extensions to use
-db = SQLAlchemy(metadata=MetaData(naming_convention=naming_convention))
+# Flask-SQLAlchemy 3.1 removed the `metadata` kwarg from SQLAlchemy().
+# The current approach is to declare a base class with the desired metadata
+# and pass it as model_class. db.Model is then equivalent to Base.
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=naming_convention)
+
+db = SQLAlchemy(model_class=Base)
 
 def export_db_to_csv(db_session, excluded_columns=None):
     """
