@@ -1,3 +1,4 @@
+import sys; sys.stdout.write("===APP_PY_START===\n"); sys.stdout.flush()
 import os
 import multiprocessing
 from src.app_factory import create_app
