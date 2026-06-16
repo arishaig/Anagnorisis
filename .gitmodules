@@ -1,0 +1,3 @@
+[submodule "modules/spotify_import"]
+	path = modules/spotify_import
+	url = https://github.com/arishaig/anagnorisis-spotify
