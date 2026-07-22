@@ -14,7 +14,7 @@ set -euo pipefail
 REPO_URL="https://github.com/arishaig/Anagnorisis.git"
 INSTALL_DIR="${HOME}/.local/share/omni-describe/app"
 DATA_DIR="${HOME}/.local/share/omni-describe/data"
-MEDIA_BASE_URL="http://192.168.1.110:30817"
+MEDIA_BASE_URL="https://omni-media.arishaig.site"
 
 require() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1 ($2)"; exit 1; }

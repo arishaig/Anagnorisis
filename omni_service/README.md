@@ -13,11 +13,14 @@ Range-request support. `ffmpeg`/OpenCV can both read frames and audio
 directly from an HTTP URL, so nothing is downloaded up front — only the
 byte ranges actually needed for hashing and frame/audio sampling.
 
-That nginx instance is deliberately unauthenticated (no accounts, no TLS)
-and reachable only via its NodePort (`30817`) on the LAN — it never goes
-through Traefik or Authelia. This is intentionally scoped to "temporary,
-local, don't care about auth" use; tear it down (remove it from
-`k8s/apps/media/kustomization.yaml`) once you're done with this tool.
+That nginx instance is deliberately unauthenticated (no accounts) and
+reachable at `https://omni-media.arishaig.site` (Traefik, wildcard cert,
+gated by the `local-only` LAN IP allowlist — not Authelia, so no login) or
+directly via its NodePort (`http://<any-node-ip>:30817`, bypassing Traefik
+entirely). This is intentionally scoped to "temporary, local, don't care
+about auth" use; tear it down (remove it from
+`k8s/apps/media/kustomization.yaml` and its IngressRoute) once you're done
+with this tool.
 
 ## Setup
 
@@ -25,8 +28,8 @@ local, don't care about auth" use; tear it down (remove it from
    been applied via the normal Flux pipeline (commit + push — not
    `kubectl apply`).
 2. Edit `omni_service/config.yaml`:
-   - `videos.media_base_url` — any cluster node's IP + `:30817` (e.g.
-     `http://192.168.1.110:30817`).
+   - `videos.media_base_url` — `https://omni-media.arishaig.site` (or any
+     cluster node's IP + `:30817` to bypass Traefik).
    - `main.project_config_directory` — local path for this service's own
      cache/model download dir.
 3. Install deps (same as the main app — `torch` w/ CUDA, `transformers`,

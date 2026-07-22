@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 $RepoUrl      = "https://github.com/arishaig/Anagnorisis.git"
 $InstallDir   = "$env:LOCALAPPDATA\omni-describe\app"
 $DataDir      = "$env:LOCALAPPDATA\omni-describe\data"
-$MediaBaseUrl = "http://192.168.1.110:30817"
+$MediaBaseUrl = "https://omni-media.arishaig.site"
 
 function Require-Command($name, $hint) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {

@@ -6,10 +6,12 @@ main:
 
 videos:
   # HTTP source for the media share — served by the dedicated, unauthenticated
-  # nginx instance at k8s/apps/media/omni-media-server.yaml (NodePort 30817,
-  # bypasses Traefik/Authelia on purpose — LAN-only, temporary tool).
-  # Any cluster node's IP works; pick whichever is convenient/stable.
-  media_base_url: "http://192.168.1.110:30817"
+  # nginx instance at k8s/apps/media/omni-media-server.yaml. Routed through
+  # Traefik (wildcard cert) but gated by the local-only middleware (LAN-only
+  # IP allowlist, no login) rather than Authelia — temporary tool, no auth
+  # needed, just not meant to be reachable from the public internet.
+  # Direct NodePort also still works: http://<any-node-ip>:30817
+  media_base_url: "https://omni-media.arishaig.site"
   media_formats:
     - .mp4
     - .mkv
