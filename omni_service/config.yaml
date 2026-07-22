@@ -1,0 +1,41 @@
+main:
+  # Where this service keeps its own DB/cache/models. Kept separate from the
+  # cluster pod's /project_config (which is a ReadWriteOnce PVC) so the two
+  # never fight over the same files. Point this at a local disk path.
+  project_config_directory: /home/isaac/anagnorisis-omni-service/project_config
+
+videos:
+  # HTTP source for the media share — served by the dedicated, unauthenticated
+  # nginx instance at k8s/apps/media/omni-media-server.yaml (NodePort 30817,
+  # bypasses Traefik/Authelia on purpose — LAN-only, temporary tool).
+  # Any cluster node's IP works; pick whichever is convenient/stable.
+  media_base_url: "http://192.168.1.110:30817"
+  media_formats:
+    - .mp4
+    - .mkv
+    - .avi
+    - .mov
+    - .wmv
+    - .flv
+    - .ogv
+    - .mpeg
+    - .mpg
+    - .webm
+
+text_embedder:
+  model_name: "jinaai/jina-embeddings-v3"
+  device: cuda
+  chunk_size: 384
+  chunk_overlap: 128
+  embedding_dimension: 1024
+
+omni:
+  model_name: "dystrio/MiniCPM-o-4_5-Sculpt-Throughput"
+  device: cuda
+  load_in_4bit: true
+  max_new_tokens: 256
+  do_sample: false
+  temperature: 0.2
+  video_sample_max_size: 512
+  image_max_size: 512
+  min_free_vram_to_run: 7680

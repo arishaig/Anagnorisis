@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Omni Describe</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f7f8; --fg: #1b1b1f; --muted: #6b6b76; --border: #dcdce0;
+    --card: #ffffff; --accent: #4f6df5; --ok: #2e9e5b; --err: #d5493f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181c; --fg: #eceef2; --muted: #9a9ba5; --border: #2c2d33; --card: #1f2025; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    background: var(--card); position: sticky; top: 0; z-index: 2;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #status { display: flex; gap: 8px; font-size: 12px; color: var(--muted); }
+  .badge {
+    padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+  }
+  .badge.good { color: var(--ok); border-color: var(--ok); }
+  .badge.bad { color: var(--err); border-color: var(--err); }
+  main { max-width: 900px; margin: 0 auto; padding: 20px; }
+  #breadcrumbs { font-size: 13px; margin-bottom: 12px; color: var(--muted); }
+  #breadcrumbs a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  #breadcrumbs a:hover { text-decoration: underline; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--card); color: var(--fg); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  ul#listing { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  ul#listing li {
+    display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+    border-bottom: 1px solid var(--border); background: var(--card);
+  }
+  ul#listing li:last-child { border-bottom: none; }
+  li.dir { cursor: pointer; }
+  li.dir:hover { background: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+  .icon { width: 18px; text-align: center; flex-shrink: 0; }
+  .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+  .dot.yes { background: var(--ok); }
+  .dot.no { background: var(--border); }
+  .row-btn { font-size: 12px; padding: 3px 9px; }
+  #progress { font-size: 12px; color: var(--muted); margin-left: 10px; }
+  #detail {
+    margin-top: 16px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); padding: 14px 16px; display: none;
+  }
+  #detail.open { display: block; }
+  #detail h2 { font-size: 14px; margin: 0 0 8px; }
+  #detail pre {
+    white-space: pre-wrap; font-family: inherit; font-size: 13px; margin: 0;
+    max-height: 50vh; overflow-y: auto; line-height: 1.5;
+  }
+  #detail .close { float: right; }
+  .spinner {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    animation: spin .7s linear infinite; margin-right: 6px; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 Omni Describe</h1>
+  <div id="status">loading…</div>
+</header>
+
+<main>
+  <div id="breadcrumbs"></div>
+  <div class="toolbar">
+    <button id="describeAllBtn" class="primary">Describe all undescribed here</button>
+    <span id="progress"></span>
+  </div>
+  <ul id="listing"></ul>
+
+  <div id="detail">
+    <button class="close" onclick="closeDetail()">✕</button>
+    <h2 id="detailTitle"></h2>
+    <pre id="detailBody"></pre>
+  </div>
+</main>
+
+<script>
+let currentPath = "";
+let currentFiles = [];
+
+async function loadHealth() {
+  const el = document.getElementById('status');
+  try {
+    const r = await fetch('/health');
+    const h = await r.json();
+    el.innerHTML = `
+      <span class="badge ${h.cuda_available ? 'good' : 'bad'}">${h.cuda_available ? 'GPU available' : 'CPU only'}</span>
+      <span class="badge ${h.model_loaded ? 'good' : ''}">${h.model_loaded ? 'model loaded' : 'model idle'}</span>
+      <span class="badge">${h.omni_model}</span>
+    `;
+  } catch (e) {
+    el.textContent = 'backend unreachable';
+  }
+}
+
+function renderBreadcrumbs(path) {
+  const parts = path ? path.split('/') : [];
+  let acc = '';
+  let html = `<a onclick="browse('')">media</a>`;
+  for (const p of parts) {
+    acc = acc ? acc + '/' + p : p;
+    html += ` / <a onclick="browse('${acc.replace(/'/g, "\\'")}')">${p}</a>`;
+  }
+  document.getElementById('breadcrumbs').innerHTML = html;
+}
+
+function iconFor(name) {
+  return name.match(/\.(mp4|mkv|avi|mov|wmv|flv|ogv|mpeg|mpg|webm)$/i) ? '🎬' : '📄';
+}
+
+async function browse(path) {
+  const r = await fetch('/api/browse?path=' + encodeURIComponent(path));
+  const data = await r.json();
+  if (data.error) { alert(data.error); return; }
+
+  currentPath = data.path;
+  currentFiles = data.files;
+  renderBreadcrumbs(currentPath);
+
+  const ul = document.getElementById('listing');
+  ul.innerHTML = '';
+
+  if (data.dirs.length === 0 && data.files.length === 0) {
+    ul.innerHTML = '<div class="empty">Empty folder</div>';
+    return;
+  }
+
+  for (const d of data.dirs) {
+    const li = document.createElement('li');
+    li.className = 'dir';
+    li.onclick = () => browse(d.path);
+    li.innerHTML = `<span class="icon">📁</span><span class="name">${d.name}</span>`;
+    ul.appendChild(li);
+  }
+  for (const f of data.files) {
+    const li = document.createElement('li');
+    li.id = 'row-' + btoa(encodeURIComponent(f.path));
+    const dotClass = f.described === true ? 'yes' : (f.described === false ? 'no' : '');
+    li.innerHTML = `
+      <span class="icon">${iconFor(f.name)}</span>
+      <span class="dot ${dotClass}" title="${f.described === true ? 'described' : 'not yet described'}"></span>
+      <span class="name">${f.name}</span>
+      <button class="row-btn" onclick="describeFile('${f.path.replace(/'/g, "\\'")}')">Describe</button>
+    `;
+    ul.appendChild(li);
+  }
+}
+
+function rowEl(path) {
+  return document.getElementById('row-' + btoa(encodeURIComponent(path)));
+}
+
+async function describeFile(path) {
+  const li = rowEl(path);
+  const btn = li.querySelector('button');
+  const dot = li.querySelector('.dot');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>describing…';
+
+  try {
+    const r = await fetch('/describe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_path: path }),
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+
+    dot.classList.remove('no'); dot.classList.add('yes');
+    showDetail(path, data.description);
+    loadHealth();
+  } catch (e) {
+    alert('Failed to describe ' + path + ': ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Describe';
+  }
+}
+
+function showDetail(path, description) {
+  document.getElementById('detailTitle').textContent = path;
+  document.getElementById('detailBody').textContent = description;
+  document.getElementById('detail').classList.add('open');
+}
+function closeDetail() {
+  document.getElementById('detail').classList.remove('open');
+}
+
+async function describeAllUndescribed() {
+  const todo = currentFiles.filter(f => f.described !== true).map(f => f.path);
+  const progress = document.getElementById('progress');
+  const btn = document.getElementById('describeAllBtn');
+  if (todo.length === 0) { progress.textContent = 'nothing to do'; return; }
+
+  btn.disabled = true;
+  for (let i = 0; i < todo.length; i++) {
+    progress.textContent = `${i + 1} / ${todo.length}`;
+    try { await describeFile(todo[i]); } catch (e) { /* already alerted */ }
+  }
+  progress.textContent = `done (${todo.length})`;
+  btn.disabled = false;
+}
+
+document.getElementById('describeAllBtn').onclick = describeAllUndescribed;
+
+loadHealth();
+browse('');
+setInterval(loadHealth, 15000);
+</script>
+</body>
+</html>
