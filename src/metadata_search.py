@@ -81,56 +81,56 @@ class MetadataSearch:
             )
         return self._text_embedder_cpu
 
-    def _read_cached_metadata_embeddings(self, file_paths):
-        """Read cached metadata embeddings for file_paths (CPU only, no subprocess).
+    # def _read_cached_metadata_embeddings(self, file_paths):
+    #     """Read cached metadata embeddings for file_paths (CPU only, no subprocess).
 
-        Uses the same cache-key formula as _process_single_file_meta so any
-        metadata embedding written by the background description pass is found
-        here.
-        """
-        cached_paths, cached_embs, missing_paths = [], [], []
-        for fp in file_paths:
-            try:
-                base_url, path_in_fs = vfs.resolve_base_and_path_from_url(fp)
-                with fs.open_fs(base_url) as my_fs:
-                    info = my_fs.getinfo(path_in_fs, namespaces=['details'])
-                    file_size = info.size
-                    modified_sec = info.get('details', 'modified')
-                    file_mtime = modified_sec if modified_sec is not None else 0
+    #     Uses the same cache-key formula as _process_single_file_meta so any
+    #     metadata embedding written by the background description pass is found
+    #     here.
+    #     """
+    #     cached_paths, cached_embs, missing_paths = [], [], []
+    #     for fp in file_paths:
+    #         try:
+    #             base_url, path_in_fs = vfs.resolve_base_and_path_from_url(fp)
+    #             with fs.open_fs(base_url) as my_fs:
+    #                 info = my_fs.getinfo(path_in_fs, namespaces=['details'])
+    #                 file_size = info.size
+    #                 modified_sec = info.get('details', 'modified')
+    #                 file_mtime = modified_sec if modified_sec is not None else 0
 
-                    meta_path_in_fs = path_in_fs + '.meta'
-                    if my_fs.exists(meta_path_in_fs):
-                        try:
-                            meta_info = my_fs.getinfo(meta_path_in_fs, namespaces=['details'])
-                            meta_modified = meta_info.get('details', 'modified')
-                            meta_mtime = meta_modified if meta_modified is not None else 0
-                            meta_sig = f"{meta_mtime}::{meta_info.size}"
-                        except Exception:
-                            meta_sig = "meta_stat_error"
-                    else:
-                        meta_sig = "no_meta"
+    #                 meta_path_in_fs = path_in_fs + '.meta'
+    #                 if my_fs.exists(meta_path_in_fs):
+    #                     try:
+    #                         meta_info = my_fs.getinfo(meta_path_in_fs, namespaces=['details'])
+    #                         meta_modified = meta_info.get('details', 'modified')
+    #                         meta_mtime = meta_modified if meta_modified is not None else 0
+    #                         meta_sig = f"{meta_mtime}::{meta_info.size}"
+    #                     except Exception:
+    #                         meta_sig = "meta_stat_error"
+    #                 else:
+    #                     meta_sig = "no_meta"
 
-                cache_key = (
-                    f"meta::{fp}::{file_mtime}::{file_size}::"
-                    f"meta::{meta_sig}::"
-                    f"alg::{self.get_algorithm_version()}"
-                )
-                emb = self._fast_cache.get(cache_key)
-                if emb is not None:
-                    cached_paths.append(fp)
-                    cached_embs.append(emb)
-                else:
-                    missing_paths.append(fp)
-            except Exception:
-                missing_paths.append(fp)
-        return cached_paths, cached_embs, missing_paths
+    #             cache_key = (
+    #                 f"meta::{fp}::{file_mtime}::{file_size}::"
+    #                 f"meta::{meta_sig}::"
+    #                 f"alg::{self.get_algorithm_version()}"
+    #             )
+    #             emb = self._fast_cache.get(cache_key)
+    #             if emb is not None:
+    #                 cached_paths.append(fp)
+    #                 cached_embs.append(emb)
+    #             else:
+    #                 missing_paths.append(fp)
+    #         except Exception:
+    #             missing_paths.append(fp)
+    #     return cached_paths, cached_embs, missing_paths
     
     def get_algorithm_version(self) -> str:
         """
         Returns the current hashing algorithm identifier used by this engine.
         Used for cache invalidation when the algorithm changes.
         """
-        return "meta-search-v1.5" 
+        return "meta-search-v1.8" 
     
     @staticmethod
     def _format_duration(seconds: float) -> str:
@@ -236,21 +236,29 @@ class MetadataSearch:
             return self._fast_cache.get(f"omni_model_hash::{model_name}")
         return None
 
+    # def make_description_cache_key(self, file_path: str) -> str:
+    #     model_hash = self._get_omni_model_hash()
+
+    #     ext = os.path.splitext(file_path)[1].lower()
+    #     method_name = self._extension_to_describe_method(ext)
+
+    #     # VFS-safe cache key (matches the new _get_auto_description key)
+    #     base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
+    #     with fs.open_fs(base_url) as my_fs:
+    #         info = my_fs.getinfo(path_in_fs, namespaces=['details'])
+    #         size = info.size
+    #         modified_sec = info.get('details', 'modified')
+    #         mtime_ns = int(modified_sec * 1e9) if modified_sec is not None else 0
+
+    #     return f"auto_desc::{file_path}::{size}::{mtime_ns}::{model_hash}::{method_name}"
+
     def make_description_cache_key(self, file_path: str) -> str:
         model_hash = self._get_omni_model_hash()
 
         ext = os.path.splitext(file_path)[1].lower()
         method_name = self._extension_to_describe_method(ext)
 
-        # VFS-safe cache key (matches the new _get_auto_description key)
-        base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
-        with fs.open_fs(base_url) as my_fs:
-            info = my_fs.getinfo(path_in_fs, namespaces=['details'])
-            size = info.size
-            modified_sec = info.get('details', 'modified')
-            mtime_ns = int(modified_sec * 1e9) if modified_sec is not None else 0
-
-        return f"auto_desc::{file_path}::{size}::{mtime_ns}::{model_hash}::{method_name}"
+        return f"auto_desc::{file_path}::{model_hash}::{method_name}"
 
     def get_undescribed_files(self, file_paths: list[str]) -> list[str] | None:
         """Return paths from file_paths that have no cached auto-description.
@@ -451,29 +459,29 @@ class MetadataSearch:
         """
         try:
             # 1. Generate a robust cache key from file stats (VFS-aware).
-            base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
-            with fs.open_fs(base_url) as my_fs:
-                info = my_fs.getinfo(path_in_fs, namespaces=['details'])
-                file_size = info.size
-                modified_sec = info.get('details', 'modified')
-                file_mtime = modified_sec if modified_sec is not None else 0
+            # base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
+            # with fs.open_fs(base_url) as my_fs:
+            #     info = my_fs.getinfo(path_in_fs, namespaces=['details'])
+            #     file_size = info.size
+            #     modified_sec = info.get('details', 'modified')
+            #     file_mtime = modified_sec if modified_sec is not None else 0
 
-                meta_path_in_fs = path_in_fs + '.meta'
-                if my_fs.exists(meta_path_in_fs):
-                    try:
-                        meta_info = my_fs.getinfo(meta_path_in_fs, namespaces=['details'])
-                        meta_modified = meta_info.get('details', 'modified')
-                        meta_mtime = meta_modified if meta_modified is not None else 0
-                        meta_sig = f"{meta_mtime}::{meta_info.size}"
-                    except Exception:
-                        meta_sig = "meta_stat_error"
-                else:
-                    meta_sig = "no_meta"
+            #     meta_path_in_fs = path_in_fs + '.meta'
+            #     if my_fs.exists(meta_path_in_fs):
+            #         try:
+            #             meta_info = my_fs.getinfo(meta_path_in_fs, namespaces=['details'])
+            #             meta_modified = meta_info.get('details', 'modified')
+            #             meta_mtime = meta_modified if meta_modified is not None else 0
+            #             meta_sig = f"{meta_mtime}::{meta_info.size}"
+            #         except Exception:
+            #             meta_sig = "meta_stat_error"
+            #     else:
+            #         meta_sig = "no_meta"
 
             cache_key = (
                 f"meta::{file_path}::"
-                f"{file_mtime}::{file_size}::"
-                f"meta::{meta_sig}::"
+                # f"{file_mtime}::{file_size}::"
+                # f"meta::{meta_sig}::"
                 f"alg::{self.get_algorithm_version()}"
             )
 
@@ -517,25 +525,6 @@ class MetadataSearch:
         if total_files == 0:
             return []
 
-        # first pass: automatic descriptions
-        start_time = time.time()
-        max_elapsed = 0.0
-        for ind, file_path in enumerate(file_paths):
-            # determine progress using previously observed durations
-            if callback:
-                percent, remaining = self._calculate_progress(ind, total_files, start_time, max_elapsed)
-                callback(
-                    f"Extracting automatic descriptions for {ind}/{total_files} ({percent:.2f}%) files... "
-                    f"ETA: {self._format_duration(remaining)}"
-                )
-
-            if vfs.is_local_url(file_path):
-                file_start = time.time()
-                self._get_auto_description( file_path, generate_desc_if_not_in_cache=False)
-
-                file_elapsed = time.time() - file_start
-                if file_elapsed > max_elapsed:
-                    max_elapsed = file_elapsed
 
         # Second pass: metadata embeddings (loads TextEmbedder for cache misses) _process_single_file_meta is already
         # VFS-safe (stat-only cache key, capped .meta read, no PIL/TinyTag).
@@ -618,4 +607,3 @@ class MetadataSearch:
             scores[file_idx] = float(smooth)
 
         return scores
-    

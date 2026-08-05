@@ -233,7 +233,7 @@ class CommonFilters:
         if mode == 'semantic-metadata':
             self.common_socket_events.show_search_status("Extracting metadata embeddings")
             embeds_meta_text = self.metadata_engine.text_embedder_cpu.embed_text(text_query)
-            embeds_meta_files = self.metadata_engine.process_files(all_files, callback=self.meta_embedding_gathering_callback, media_folder=self.media_directory, generate_embs_if_not_in_cache=True)
+            embeds_meta_files = self.metadata_engine.process_files(all_files, callback=self.meta_embedding_gathering_callback, media_folder=self.media_directory, generate_embs_if_not_in_cache=False)
             # embeds_meta_text = embeds_meta_text[None,...] # Wierd hack fix later
             meta_similarity_scores = self.metadata_engine.compare(embeds_meta_files, embeds_meta_text)
 

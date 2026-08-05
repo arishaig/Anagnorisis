@@ -258,3 +258,11 @@ evaluator:
   # "full_text": embed full chunked content via TextSearch.process_files() (cached, fast)
   # "metadata":  embed via MetadataSearch.generate_full_description() like all other modules
   text_embedding_method: "full_text"
+metadata_search:
+  # Auto-desc scheduler — runs OmniDescriptor on local files only.
+  # Set to null/0 to disable.
+  auto_description_interval_minutes: 30
+  auto_description_batch_size: 10
+  # Metadata-embedding scheduler — runs TextEmbedder on local + remote files.
+  embedding_interval_minutes: 10
+  embedding_batch_size: 500
