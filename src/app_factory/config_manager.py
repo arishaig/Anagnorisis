@@ -2,6 +2,8 @@ import os
 import glob
 from omegaconf import OmegaConf
 
+from src.metadata.media_types import get_registry
+
 class ConfigManager:
     """Handles parsing configuration files and ensuring required directories exist."""
 
@@ -26,6 +28,15 @@ class ConfigManager:
             mod_cfg = OmegaConf.load(mod_cfg_path)
             cfg = OmegaConf.merge(mod_cfg, cfg)
             print(f"Merged module config defaults: {mod_cfg_path}")
+
+        # Auto-merge the media-type taxonomy (media_types/*.yaml), same override
+        # rules as module defaults. Tag vocabularies in media_types/tags/ are
+        # deliberately NOT merged here — MediaTypeRegistry loads them, so the
+        # bulky lists never reach the config or the embedding subprocesses.
+        media_types_folder = os.path.join(root_folder, 'media_types')
+        for types_cfg_path in sorted(glob.glob(os.path.join(media_types_folder, '*.yaml'))):
+            cfg = OmegaConf.merge(OmegaConf.load(types_cfg_path), cfg)
+            print(f"Merged media type definitions: {types_cfg_path}")
 
         # Load local configuration if it exists
         project_config_folder_path = cfg.main.get('project_config_directory', 'project_config')
@@ -58,6 +69,18 @@ class ConfigManager:
         cfg.main.personal_models_path = paths["personal_models"]
         cfg.main.cache_path = paths["cache"]
         cfg.main.memory_path = paths["memory"]
+        cfg.main.media_types_path = media_types_folder
+
+        # Derive each module's media_formats from the media types it declares, so
+        # extension lists exist in exactly one place. A module that declares
+        # `media_types:` must not also set `media_formats:` — the derived value
+        # wins. Modules with formats of their own (e.g. YouTube's .link) simply
+        # declare no media types and keep their explicit list.
+        registry = get_registry(cfg)
+        for section in cfg:
+            declared = OmegaConf.select(cfg, f'{section}.media_types', default=None)
+            if declared:
+                cfg[section].media_formats = registry.extensions_for(declared)
 
         # Load the user-specific configuration as a clean, isolated object
         user_config_path = os.path.join(project_config_folder_path, 'config.yaml')

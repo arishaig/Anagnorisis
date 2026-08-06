@@ -3,7 +3,6 @@ import json
 import pickle
 import hashlib
 import datetime
-import traceback
 import concurrent.futures
 import torch
 
@@ -131,30 +130,12 @@ from src.socket_events import CommonSocketEvents
 import time
 import numpy as np
 from src.utils import convert_size, weighted_shuffle
-from src.caching import TwoLevelCache 
+from src.caching import get_two_level_cache
+from src.file_walker import get_file_walker
 import src.db_models as db_models
-import threading
-from typing import Dict, Optional
 from src.db_models import FilesLibrary
 
 import fs
-
-_TLC_SINGLETONS: Dict[str, "TwoLevelCache"] = {}
-_TLC_LOCK = threading.Lock()
-
-def get_two_level_cache(cache_dir: str, **kwargs) -> "TwoLevelCache":
-    """
-    Return a shared TwoLevelCache instance for this cache_dir within the process.
-    First caller’s kwargs win; later calls ignore differing kwargs.
-    """
-    abs_dir = os.path.abspath(cache_dir)
-    with _TLC_LOCK:
-        inst = _TLC_SINGLETONS.get(abs_dir)
-        if inst is not None:
-            return inst
-        inst = TwoLevelCache(cache_dir=abs_dir, **kwargs)
-        _TLC_SINGLETONS[abs_dir] = inst
-        return inst
 
 class FileManager:
     def __init__(self, app, cfg, media_directory, engine=None, module_name="FileManager", media_formats=None, socketio=None, db_schema=None):
@@ -171,28 +152,14 @@ class FileManager:
         self.db_schema = db_schema
         self.engine = engine
 
-        print(f"[FileManager] ", app.user_cfg)
-        if not hasattr(app, 'user_cfg') or not hasattr(app.user_cfg, 'servers'):
-            raise ValueError("Configuration object must have 'user_cfg.servers' attribute.")
-        
-        self.servers = app.user_cfg.servers
-
-
-
-        # self.cached_file_list = engine.cached_file_list
-        # self.cached_file_hash = engine.cached_file_hash
-        # self.cached_metadata = engine.cached_metadata
+        # Traversal, the directory cache and server availability are shared
+        # process-wide — see src/file_walker.py.
+        self._walker = get_file_walker(app, cfg)
+        self.servers = self._walker.servers
 
         # Folder tree cache (persisted across many instances of FileManager as a singleton object)
         cache_folder = os.path.join(cfg.main.cache_path, "file_manager")
         self._fast_cache = get_two_level_cache(cache_dir=cache_folder, name="file_manager")
-
-        self._server_availability: Dict[str, Optional[bool]] = {}
-        self._server_availability_lock = threading.Lock()
-
-        # Start a single, lightweight background monitor loop
-        t = threading.Thread(target=self._monitor_servers_loop, daemon=True, name="ServerMonitor")
-        t.start()
 
     def show_status(self, message, force=False):
         self.common_socket_events.show_search_status(message, force=force)
@@ -400,43 +367,6 @@ class FileManager:
 
     #     return {"folders": folders, "folder_path": folder_path}
 
-    def _resolve_server_from_path(self, path: str):
-        for server in self.servers:
-            if path.startswith(server.url):
-                return server
-        return None
-        
-    def _check_server_availability(self, url: str) -> bool:
-        """Attempts to open the filesystem at url and execute a quick read to verify connection."""
-        if url.startswith("osfs://"):
-            return True
-        try:
-            base_url, path_in_fs = vfs.resolve_base_and_path_from_url(url)
-            # logger.info(f"[DEBUG] Checking server: {url} -> Resolved Base: {base_url}")
-            
-            with fs.open_fs(base_url) as f:
-                # Force a network round-trip handshake
-                list(f.listdir(path_in_fs))
-            
-            #logger.info(f"[DEBUG] Connection SUCCESS for {url}")
-            return True
-        except Exception as e:
-            # logger.error(f"[DEBUG] Connection FAILED for {url}. Error: {e}")
-            return False
-
-    def _monitor_servers_loop(self):
-        """Standard Polling Heartbeat: Periodically checks all servers in the background."""
-        while True:
-            for server in self.servers:
-                url = server.url
-                available = self._check_server_availability(url)
-                
-                with self._server_availability_lock:
-                    self._server_availability[url] = available
-            
-            # Check all servers every 10 minutes (600 seconds)
-            time.sleep(600.0)
-
     def get_folders(self, path = ""):
         # Determine the active folder path
         active_path = self.resolve_media_path(path)
@@ -511,9 +441,7 @@ class FileManager:
             display_name = server.name
             server_node = _build_tree_node(display_name, server.url, "server")
 
-            with self._server_availability_lock:
-                cached = self._server_availability.get(server.url)
-            server_node["is_available"] = cached
+            server_node["is_available"] = self._walker.availability(server.url)
 
             root_node["subfolders"].append(server_node)
 
@@ -543,156 +471,10 @@ class FileManager:
         return hashes
 
     def _list_dir_cached(self, path: str, media_exts: set[str], active_fs=None) -> tuple[list[str], list[str]]:
-        """
-        Return (files_in_dir, subdirs) for path using TwoLevelCache keyed by dir mtime.
-        """
+        return self._walker.list_dir(path, media_exts, active_fs=active_fs)
 
-        # 1. Check that the path is within one of the allowed roots
-        if not any(path.startswith(server.url) for server in self.servers):
-            logger.warning(f"Security check failed: {path} is not within allowed roots.")
-            return [], []
-        
-        # 2. Resolve base_url and path_in_fs to avoid PyFilesystem's greedy URL parser
-        try:
-            base_url, path_in_fs = vfs.resolve_base_and_path_from_url(path)
-        except Exception as e:
-            logger.error(f"Error resolving path \"{path}\": {e}")
-            return [], []
-        
-        # Internal helper to perform the actual directory scanning on an open FS
-        def _scan_fs(media_fs):
-            # Let any network exceptions propagate so they can be caught by the outer block
-            info = media_fs.getinfo(path_in_fs, namespaces=['details'])
-            modified_dt_timestamp = info.modified.timestamp() if info.modified else None
-
-            if modified_dt_timestamp is None:
-                # Fallback: Cache directory structure for 10 seconds to make rapid UI sorting instant
-                modified_dt_timestamp = int(time.time() / 10) * 10
-                logger.debug(f"Could not get modified timestamp for {path}. Using 10s ephemeral cache key.")
-            else:
-                logger.debug(f"Directory mtime for {path}: {modified_dt_timestamp}")
-
-            ext_sig = ",".join(sorted(media_exts)) if media_exts else "-"
-            key = f"MEDIAFILES_OF:{path}|{modified_dt_timestamp}|{ext_sig}"
-
-            # 1. CACHE HIT: Return immediately. Do NOT update server availability 
-            # because we did not perform any network operations.
-            cached = self._fast_cache.get(key)
-            if cached is not None:
-                return cached
-
-            # 2. CACHE MISS: Perform the actual network directory scan
-            files: list[str] = []
-            subdirs: list[str] = []
-            for e in media_fs.scandir(path_in_fs, namespaces=['details']):
-                try:
-                    if e.is_file:
-                        ext = os.path.splitext(e.name)[1].lower()
-                        if not media_exts or ext in media_exts:
-                            files.append(os.path.join(path, e.name))
-                    elif e.is_dir:
-                        subdirs.append(os.path.join(path, e.name))
-                except Exception as inner_e:
-                    traceback.print_exc()
-                    logger.error(f"Error processing entry \"{e.name}\" in \"{path}\": {inner_e}")
-                    continue
-
-            # 3. SUCCESS: The network scan succeeded! We can now safely promote the server to online.
-            srv = self._resolve_server_from_path(path)
-            if srv:
-                with self._server_availability_lock:
-                    self._server_availability[srv.url] = True
-
-            # Cache the result for this directory
-            self._fast_cache.set(key, (files, subdirs))
-            return files, subdirs
-        
-        # 3. Open or Reuse FS Connection
-        if active_fs is not None:
-            try:
-                return _scan_fs(active_fs)
-            except Exception as e:
-                srv = self._resolve_server_from_path(path)
-                if srv:
-                    with self._server_availability_lock:
-                        self._server_availability[srv.url] = False
-                logger.error(f"Error scanning active filesystem: \"{path}\", Exception: {e}")
-                return [], []
-
-        try:
-            with fs.open_fs(base_url) as media_fs:
-                return _scan_fs(media_fs)
-        except Exception as e:
-            # FAILURE: Connection or scan failed. Instantly demote the server (Red Dot) [1]
-            srv = self._resolve_server_from_path(path)
-            if srv:
-                with self._server_availability_lock:
-                    self._server_availability[srv.url] = False
-            logger.error(f"Error opening filesystem: \"{path}\", Exception: {e}")
-            return [], []
-
-    def _walk_files_cached(self, path: str, media_exts: set[str], progress: dict = None, active_fs=None) -> list[str]:
-        if progress is None:
-            progress = {'count': 0, 'last_update': time.time()}
-
-        all_files = []
-        all_subdirs = []
-        
-        if path == "/":
-            # Scanning multiple servers: let each server establish its own pooled connection
-            for server in self.servers:
-                try:
-                    files = self._walk_files_cached(server.url, media_exts, progress)
-                    all_files.extend(files)
-                except Exception as e:
-                    self._update_availability(server.url, False)
-                    logger.error(f"Error walking root {server.url}: {e}")
-            return all_files
-
-        # Handle a specific single root / subpath
-        try:
-            base_url, _ = vfs.resolve_base_and_path_from_url(path)
-        except Exception as e:
-            logger.error(f"Error resolving path \"{path}\": {e}")
-            return []
-
-        # If we don't have an active connection, open one at the top of the recursion
-        if active_fs is None:
-            try:
-                with fs.open_fs(base_url) as media_fs:
-                    return self._walk_files_cached(path, media_exts, progress, active_fs=media_fs)
-            except Exception as e:
-                srv = self._resolve_server_from_path(path)
-                if srv:
-                    self._update_availability(srv.url, False)
-                logger.error(f"Error opening filesystem connection for {path}: {e}")
-                return []
-
-        # We have an active connection! Perform the cached directory scan
-        files, subdirs = self._list_dir_cached(path, media_exts, active_fs=active_fs)
-        all_files.extend(files)
-        progress['count'] += len(files)
-
-        # Format a clean, shortened display path for the UI (throttled)
-        now = time.time()
-        if now - progress['last_update'] >= 1.0:
-            path_split = path.split('://', 1)
-            path_root = path_split[0] + "://" if len(path_split) > 1 else "" 
-            path_tail = path_split[1] if len(path_split) > 1 else ""
-
-            if len(path_tail) > 20:
-                display_path = path_root + " ..." + path_tail[-17:]
-            else:
-                display_path = path
-
-            self.show_status(f"Scanning files ({display_path}): Found {progress['count']} so far...")
-            progress['last_update'] = now
-
-        # Recurse into subdirectories reusing the active connection pool
-        for subpath in subdirs:
-            all_files.extend(self._walk_files_cached(subpath, media_exts, progress, active_fs=active_fs))
-            
-        return all_files
+    def _walk_files_cached(self, path: str, media_exts: set[str]) -> list[str]:
+        return self._walker.walk(path, media_exts, status_callback=self.show_status)
 
     def get_files(self, path = "", pagination = 0, limit = 100, text_query = None, seed = None, filters: dict = {}, get_file_info = None, mode = 'file-name', order = 'most-relevant', temperature = 0):
 
@@ -781,16 +563,6 @@ class FileManager:
         # logger.info(f"Scores calculated for {len(scores)} files.")
 
         # logger.info(f"Sorting {len(all_files)} files with temperature={temperature}, order={order}...")
-        indices = weighted_shuffle(scores, temperature=temperature) 
-
-        if order == 'most-relevant':
-            pass  # already sorted in descending order
-        elif order == 'least-relevant':
-            indices = indices[::-1]  # reverse for ascending order
-        else:
-            raise ValueError("order must be 'most-relevant' or 'least-relevant'")
-
-        
         def is_valid_pair(i):
             score = scores[i]
             file_path = all_files[i]
@@ -805,11 +577,23 @@ class FileManager:
                 return False
             return True
 
-        sorted_files = [all_files[i] for i in indices if is_valid_pair(i)]
-        sorted_scores = [scores[i] for i in indices if is_valid_pair(i)]
+        # Discard unscored files BEFORE sorting, not after. Ranking them and then
+        # dropping them wastes the work, and any unscored file left in the input
+        # used to drag the scored ones out of order along with it.
+        valid = [i for i in range(len(all_files)) if is_valid_pair(i)]
+        unindexed_count = len(all_files) - len(valid)
 
-        # Number of filtered out any None scores and files, keeping only valid pairs.
-        unindexed_count = len(all_files) - len(sorted_files)
+        indices = weighted_shuffle([scores[i] for i in valid], temperature=temperature)
+
+        if order == 'most-relevant':
+            pass  # already sorted in descending order
+        elif order == 'least-relevant':
+            indices = indices[::-1]  # reverse for ascending order
+        else:
+            raise ValueError("order must be 'most-relevant' or 'least-relevant'")
+
+        sorted_files = [all_files[valid[j]] for j in indices]
+        sorted_scores = [scores[valid[j]] for j in indices]
 
         # Select files for the current page
         page_files = sorted_files[pagination:pagination+limit]

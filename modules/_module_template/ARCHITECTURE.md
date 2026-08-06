@@ -79,7 +79,7 @@ Typical initialization order inside `init_socket_events`:
 
 ```
 CommonSocketEvents  →  read config  →  init engine  →  load evaluator
-→  FileManager  →  MetadataSearch  →  CommonFilters  →  Flask routes
+→  FileManager  →  metadata search  →  CommonFilters  →  Flask routes
 →  socket handlers  →  schedule background tasks
 ```
 
@@ -148,7 +148,8 @@ Modules can include any extra `.py` files (e.g. `crawler.py` in the WebSearch mo
 | `src.base_search_engine.BaseSearchEngine` | Abstract base for all embedding engines. Provides model management, caching, and batch processing. |
 | `src.file_manager.FileManager` | Discovers files in `media_directory`, computes hashes, handles pagination, and coordinates with the search engine for embedding extraction. Also provides `get_unrated_files(evaluator_hash)` and `list_all_files()`. |
 | `src.common_filters.CommonFilters` | Pluggable sorting/filtering system. Built-in filters: `by_text`, `by_file`, `file_size`, `similarity`, `random`, `rating`. Modules can add custom filters (e.g. `recommendation`, `length`). |
-| `src.metadata_search.MetadataSearch` | Builds text descriptions from file metadata (name, path, EXIF/tags, OmniDescriptor captions, `.meta` sidecars) and embeds them for semantic search. Also provides `get_undescribed_files()` for background description generation. |
+| `src.metadata.search.get_metadata_search` | Returns the process-wide `MetadataSearch`. Builds text descriptions from file metadata (name, path, EXIF/tags, OmniDescriptor captions, `.meta` sidecars) and embeds them for semantic search. Module-independent: it resolves a file's media type from its extension, so it needs nothing from your module. |
+| `src.metadata.media_types.get_registry` | The media-type taxonomy loaded from `media_types/`. Answers "what kind of content is this file", which decides its extensions, tag vocabulary and internal-metadata reader. |
 | `src.scoring_models.Evaluator` | Base neural network for scoring. The universal evaluator (`TransformerEvaluator`) is the preferred variant for cross-module rating. |
 | `src.model_manager.ModelManager` | Wraps ML models for GPU memory-efficient inference with automatic device management and idle timeout. |
 | `src.db_models.db` | The shared SQLAlchemy instance. All modules must import `db` from here. |
@@ -231,21 +232,17 @@ schedule_task(app, interval_minutes=rating_interval, fn=_check_and_submit_rating
 
 ### Background description generation
 
-Periodically finds files without auto-generated descriptions and submits a description task:
+Your module does **not** schedule this. Descriptions and metadata embeddings are
+filled by the app-wide `MetadataIndexer` (`src/metadata/indexer.py`), which makes
+one pass over every configured server and covers every media type at once — so a
+file is described and searchable whether or not a module owns its content kind.
+Its intervals and batch sizes live in the `metadata_search:` section of
+`config.yaml`.
 
-```python
-def _check_and_submit_description():
-    """Scheduled: find undescribed files and submit a description task."""
-    # 1. Skip if a description task is already active or queued
-    # 2. all_files = file_manager.list_all_files()
-    # 3. candidates = metadata_search_engine.get_undescribed_files(all_files)
-    # 4. app.task_manager.submit('My Module: describe files (N)', task)
+Rating stays per-module, because only your module knows its evaluator.
 
-desc_interval = OmegaConf.select(cfg, 'my_module.description_update_interval_minutes', default=None)
-schedule_task(app, interval_minutes=desc_interval, fn=_check_and_submit_description)
-```
-
-Both intervals are read from `config.yaml` (or `config.defaults.yaml`) and default to `None` (disabled). The `schedule_task` utility is a no-op when the interval is falsy.
+Intervals are read from `config.yaml` (or `config.defaults.yaml`) and default to
+`None` (disabled). The `schedule_task` utility is a no-op when the interval is falsy.
 
 ---
 
@@ -299,7 +296,7 @@ To add your module to the universal evaluator:
 
 1. **Ensure your `db_models.py`** has `user_rating` and `file_path` columns.
 2. **Create `train.py`** in your module folder exposing `get_training_pairs(cfg, text_embedder, status_callback)`.
-3. **Ensure `engine.py` implements `_get_metadata()`** — this is what `MetadataSearch.generate_full_description()` calls to build the text representation.
+3. **Give your media type a `metadata_extractor`** in `media_types/media_types.yaml` if its files carry internal metadata worth reading — the reader itself goes in `src/metadata/extractors/`. This is what `generate_full_description()` uses to build the text representation.
 
 That's it. No registry entries needed — the pipeline finds your `train.py` automatically.
 

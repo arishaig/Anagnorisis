@@ -46,6 +46,24 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 # ---------------------------------------------
 
+
+def embedding_cache_key(file_path: str, model_hash: str, version: str = '') -> str:
+    """The one formula for a content-embedding cache key.
+
+    Anything reading embeddings written by ``process_files`` must build its key
+    here — notably the embedding proxy, which reads them without owning an
+    engine. A second, hand-rolled copy of this string is how proxies silently
+    stop finding embeddings.
+
+    Note that engines whose ``model_hash`` is produced by
+    ``_get_model_hash_from_instance`` already have *version* baked into it, so
+    it appears twice in their keys. That is long-standing behaviour and every
+    cached embedding on disk depends on it — do not "fix" it without accepting
+    a full re-embed of every library.
+    """
+    return f"{file_path}::{model_hash}{version}"
+
+
 class BaseSearchEngine(ABC):
     """
     Base class for all search engines (Image, Text, Music).
@@ -107,7 +125,8 @@ class BaseSearchEngine(ABC):
     def _get_metadata(self, file_path):
         """
         Abstract method: Returns the metadata of a file
-        specific to its modality (e.g., get_image_metadata, get_audiofile_data).
+        specific to its modality. Prefer delegating to a reader in
+        src/metadata/extractors/ so MetadataSearch and MemorySystem can use it too.
         """
         pass
     
@@ -310,12 +329,13 @@ class BaseSearchEngine(ABC):
             modified_sec = info.get('details', 'modified')
             mtime_ns = int(modified_sec * 1e9) if modified_sec is not None else 0
 
-            # The '::v2::' tag invalidates any metadata dict cached by an older
-            # extraction implementation (e.g. a prior stub that returned {}),
-            # whose stale entries would otherwise be served for up to 90 days
-            # and show as e.g. "null - null | null" in the UI. Bump this tag
-            # whenever the extraction shape/semantics change.
-            cache_key = f"METADATA_OF_FILE::v2::{file_path}::{mtime_ns}"
+            # The '::v3::' tag invalidates any metadata dict cached by an older
+            # extraction implementation, whose stale entries would otherwise be
+            # served for up to 90 days. Bump this tag whenever the extraction
+            # shape/semantics change. v3: the image reader now unwraps VFS URLs
+            # before handing them to PIL, so entries cached as
+            # {'error': 'Failed to extract metadata: [Errno 2] ...'} must go.
+            cache_key = f"METADATA_OF_FILE::v3::{file_path}::{mtime_ns}"
             file_metadata = self._fast_cache.get(cache_key)
 
             if file_metadata is not None:
@@ -331,9 +351,10 @@ class BaseSearchEngine(ABC):
         return metadata
     
     def make_embedding_cache_key(self, file_path: str) -> str:
-        """Public version of the cache key used by process_files() — lets
-        schedulers probe for missing embeddings without duplicating the formula."""
-        return f"{file_path}::{self.model_hash}{self._get_model_hash_postfix()}"
+        """Cache key used by process_files() for this engine's embeddings."""
+        return embedding_cache_key(
+            file_path, self.model_hash, self._get_model_hash_postfix()
+        )
 
     def _process_batch_files(self, file_paths: List[str], **kwargs) -> List[torch.Tensor]:
         """

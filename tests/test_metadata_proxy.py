@@ -1,5 +1,5 @@
 """
-Tests for src/embedding_proxy.py — quantize_embedding()
+Tests for src/metadata/proxy.py — quantize_embedding()
 
 Covers:
   - Zero/near-zero embedding returns empty string
@@ -14,7 +14,7 @@ Covers:
 import numpy as np
 import pytest
 from collections import Counter
-from src.embedding_proxy import quantize_embedding, _CHARS, _LEVELS
+from src.metadata.proxy import quantize_embedding, _CHARS, _LEVELS
 
 
 # ---------------------------------------------------------------------------

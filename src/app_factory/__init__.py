@@ -74,4 +74,12 @@ def create_app(root_folder):
         'Migrate DB ratings to memory', app.memory_system.migrate_db_ratings_to_memory
     )
 
+    # 5. Metadata indexer — the two universal background passes that fill the
+    #    description and metadata-embedding caches for every file on every
+    #    configured server. Module-independent, so it lives here rather than in
+    #    any module's serve.py. Built after init_socket_events so app.task_manager
+    #    exists for Scheduler to register itself in the Task Manager UI.
+    from src.metadata.indexer import MetadataIndexer
+    app.metadata_indexer = MetadataIndexer(app, cfg)
+
     return app, socketio, cfg

@@ -12,7 +12,7 @@ docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest
 # Or run individual test modules:
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_config_loader.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_caching.py -v
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_embedding_proxy.py -v
+docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_metadata_proxy.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_file_manager.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_common_filters.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_task_manager.py -v

@@ -5,7 +5,7 @@ When a user rates a file (anywhere in the app), a rich "memory" .md file is
 written to ``project_config/memory/<YYYY-MM-DD>/<soft_hash>.md`` capturing
 everything we know about the file at that moment:
 
-  * tags + fingerprint from the per-modality embedding model (CLAP / SigLIP),
+  * tags + fingerprint from the media type's embedding model,
   * a natural-language description from the OmniDescriptor,
   * internal metadata (TinyTag / PIL size, etc.),
   * the contents of the ``{file}.meta`` sidecar if present.
@@ -19,25 +19,21 @@ even if the original file is later moved, renamed, or disappears (especially
 from a remote server), the description is preserved so the model can still
 learn what kind of content was rated how.
 
-The memory writer owns the embedding / omni models directly (AudioEmbedder,
-ImageEmbedder, OmniDescriptor) rather than reaching into per-module engines,
-so it stays decoupled from the individual modules.
+Which handling a file gets follows from its media type (see
+src/metadata/media_types.py), so this stays decoupled from the modules: a rated
+file is described the same way whether or not a module owns its content kind.
 """
 
 import os
 import datetime
 import threading
-import numpy as np
-import torch
 import fs
 
-from omegaconf import OmegaConf
-
 import src.virtual_file_system as vfs
-from src.caching import TwoLevelCache
-from src.embedding_proxy import EmbeddingProxyGenerator
-from src.audio_embedder import AudioEmbedder, get_shared_audio_embedder
+from src.audio_embedder import get_shared_audio_embedder
 from src.image_embedder import ImageEmbedder
+from src.metadata import extractors, models
+from src.metadata.media_types import get_registry
 from src.omni_descriptor import OmniDescriptor
 from src.app_factory.event_manager import EventManager
 
@@ -48,60 +44,8 @@ _MAX_META_BYTES = 128 * 1024   # 128 KB hard cap, irrespective of line length
 _MAX_META_VALUE_LEN = 1000
 
 
-class EmbedderAdapter:
-    """Thin adapter that lets ``EmbeddingProxyGenerator`` use a bare
-    ``AudioEmbedder`` / ``ImageEmbedder`` instead of a full ``*Search`` engine.
-
-    ``EmbeddingProxyGenerator`` calls ``engine.process_text(tag)``,
-    ``engine.get_file_hash(path)``, ``engine._get_model_hash_postfix()`` and
-    reads ``engine._fast_cache`` / ``engine.model_hash``. The bare embedders
-    only expose ``embed_text`` / ``embed_audio`` / ``embed_image`` + ``model_hash``,
-    so we provide the missing surface here.
-    """
-
-    def __init__(self, embedder, cache_path, cache_prefix, model_hash_postfix, hash_algorithm="md5:v2"):
-        self._embedder = embedder
-        self.model_hash = embedder.model_hash
-        self._postfix = model_hash_postfix
-        self.hash_algorithm = hash_algorithm
-        self._fast_cache = TwoLevelCache(
-            cache_dir=os.path.join(cache_path, 'memory_embedder', cache_prefix),
-            name=cache_prefix,
-        )
-
-    def process_text(self, text):
-        """Embed a tag string and return a 1-D torch tensor (D,)."""
-        arr = self._embedder.embed_text(text)  # np.ndarray (D,)
-        return torch.from_numpy(np.asarray(arr, dtype=np.float32)).ravel()
-
-    def _get_model_hash_postfix(self):
-        return self._postfix
-
-    def get_file_hash(self, file_path):
-        """md5 over the file bytes via VFS, cached on (path, size, mtime).
-
-        Mirrors ``BaseSearchEngine.get_file_hash`` but without requiring a
-        ``*Search`` engine instance.
-        """
-        base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
-        with fs.open_fs(base_url) as my_fs:
-            info = my_fs.getinfo(path_in_fs, namespaces=['details'])
-            size = info.size
-            modified_sec = info.get('details', 'modified')
-            mtime_ns = int(modified_sec * 1e9) if modified_sec is not None else 0
-
-            cache_key = f"HASH_OF_FILE::{file_path}::{size}::{mtime_ns}::{self.hash_algorithm}"
-            cached = self._fast_cache.get(cache_key)
-            if cached is not None:
-                return cached
-
-            file_hash = vfs.calculate_file_hash(my_fs, path_in_fs)
-            self._fast_cache.set(cache_key, file_hash)
-            return file_hash
-
-
 class MemorySystem:
-    """Owns the embedding / omni models and writes durable memory .md files.
+    """Writes durable memory .md files for rated files.
 
     Instantiated once at app creation and held on ``app.memory_system``.
     ``save_memory`` is the public entry point — always enqueues a background
@@ -126,13 +70,8 @@ class MemorySystem:
         # task) via _ensure_initialized().
         self._initialized = False
         self._init_lock = threading.Lock()
-        self._audio_embedder = None
-        self._audio_adapter = None
-        self._audio_proxy = None
-        self._image_embedder = None
-        self._image_adapter = None
-        self._image_proxy = None
         self._omni = None
+        self.types = get_registry(cfg)
 
     def _ensure_initialized(self):
         """Lazily load all embedding/omni models on first use (thread-safe).
@@ -146,37 +85,14 @@ class MemorySystem:
             if self._initialized:
                 return
             cfg = self.cfg
-            cache_path = self.cache_path
             models_folder = self.models_folder
 
             print("[MemorySystem] Loading embedding/omni models (first use)...")
 
-            # --- Audio (CLAP) ---
-            self._audio_embedder = get_shared_audio_embedder(cfg, models_folder)
-            self._audio_adapter = EmbedderAdapter(
-                self._audio_embedder, cache_path, 'audio', 'v1.2'
-            )
-            self._audio_proxy = EmbeddingProxyGenerator(
-                engine=self._audio_adapter,
-                tag_list=list(OmegaConf.select(cfg, 'music.embedding_tags', default=[]) or []),
-                threshold=OmegaConf.select(cfg, 'music.embedding_tags_threshold', default=None),
-                cache_path=cache_path,
-                model_name='CLAP',
-            )
-
-            # --- Image (SigLIP) ---
-            self._image_embedder = ImageEmbedder(cfg)
-            self._image_embedder.initiate(models_folder)
-            self._image_adapter = EmbedderAdapter(
-                self._image_embedder, cache_path, 'image', 'v1.1'
-            )
-            self._image_proxy = EmbeddingProxyGenerator(
-                engine=self._image_adapter,
-                tag_list=list(OmegaConf.select(cfg, 'images.embedding_tags', default=[]) or []),
-                threshold=OmegaConf.select(cfg, 'images.embedding_tags_threshold', default=None),
-                cache_path=cache_path,
-                model_name='SigLIP',
-            )
+            # Content embedders — loaded here so a rated file always gets a proxy
+            # section, even if no module has touched that media type this session.
+            get_shared_audio_embedder(cfg, models_folder)
+            ImageEmbedder(cfg).initiate(models_folder)
 
             # --- Omni (MiniCPM-o) ---
             self._omni = OmniDescriptor(cfg)
@@ -185,29 +101,6 @@ class MemorySystem:
 
             self._initialized = True
             print("[MemorySystem] Models loaded and ready.")
-
-    # ------------------------------------------------------------------
-    # Extension -> modality dispatch
-    # ------------------------------------------------------------------
-
-    def _modality_for_extension(self, ext):
-        """Return 'audio' | 'image' | 'video' | 'text' | None for a file extension.
-
-        Reads the per-modality ``media_formats`` config lists (the single source
-        of truth, mirroring ``MetadataSearch._extension_to_describe_method``).
-        """
-        if not ext:
-            return None
-        cfg = self.cfg
-        for modality, cfg_key in (('audio', 'music'), ('image', 'images'),
-                                   ('video', 'videos'), ('text', 'text')):
-            try:
-                fmts = set(OmegaConf.select(cfg, f'{cfg_key}.media_formats', default=[]) or [])
-            except Exception:
-                fmts = set()
-            if ext in fmts:
-                return modality
-        return None
 
     # ------------------------------------------------------------------
     # Memory text builder
@@ -230,8 +123,7 @@ class MemorySystem:
         self._ensure_initialized()
 
         file_name = os.path.basename(file_path)
-        ext = os.path.splitext(file_name)[1].lower()
-        modality = self._modality_for_extension(ext)
+        media_type = self.types.for_file(file_path)
 
         parts = [
             f"Rating: {rating}",  # line 1 — parsed & stripped before embedding
@@ -244,54 +136,40 @@ class MemorySystem:
         ]
 
         # 1. Embedding proxy (tags + fingerprint) — audio (CLAP) / image (SigLIP)
-        parts.extend(self._collect_proxy_section(file_path, modality))
+        parts.extend(self._collect_proxy_section(file_path, media_type))
 
         # 2. OmniDescriptor natural-language description
-        parts.extend(self._collect_omni_section(file_path, modality))
+        parts.extend(self._collect_omni_section(file_path, media_type))
 
         # 3. Internal metadata (TinyTag / PIL size, etc.)
-        parts.extend(self._collect_internal_metadata(file_path, modality))
+        parts.extend(self._collect_internal_metadata(file_path, media_type))
 
         # 4. .meta sidecar
         parts.extend(self._collect_meta_section(file_path, file_name))
 
         return "\n".join(parts)
 
-    def _collect_proxy_section(self, file_path, modality):
-        if modality == 'audio':
-            proxy = self._audio_proxy
-        elif modality == 'image':
-            proxy = self._image_proxy
-        else:
-            # video has no real embedder; text embeddings are chunked/incompatible.
+    def _collect_proxy_section(self, file_path, media_type):
+        proxy = models.get_proxy(self.cfg, media_type)
+        if proxy is None:
+            # This media type has no content embedder, so there is no vector to
+            # turn into text.
             return []
-
-        # Cache-aware path: proxy cache → engine cache → cold compute
         try:
-            section = proxy.get_cached_proxy_text(file_path)
+            section = proxy.get_proxy_text(file_path)
             if section and section.strip():
                 return [section.strip(), ""]
         except Exception as exc:
             print(f"[MemorySystem] Proxy section failed for {file_path}: {exc}")
         return []
 
-    def _adapter_for(self, modality):
-        return self._audio_adapter if modality == 'audio' else self._image_adapter
-
-    def _collect_omni_section(self, file_path, modality):
-        if modality is None:
-            return []
-        method_name = {
-            'audio': 'describe_audio_sampled',
-            'image': 'describe_image',
-            'video': 'describe_video_sampled',
-            'text': 'describe_text',
-        }.get(modality)
+    def _collect_omni_section(self, file_path, media_type):
+        method_name = models.describe_method_for(media_type.name if media_type else None)
         if method_name is None:
             return []
         try:
             method = getattr(self._omni, method_name)
-            if modality == 'text':
+            if method_name == 'describe_text':
                 content = self._read_text_content(file_path)
                 description = method(content) if content is not None else ""
             else:
@@ -307,33 +185,18 @@ class MemorySystem:
                 pass
         return []
 
-    def _collect_internal_metadata(self, file_path, modality):
-        if modality is None:
+    def _collect_internal_metadata(self, file_path, media_type):
+        metadata = extractors.read(
+            media_type.metadata_extractor if media_type else None, file_path
+        )
+        if not metadata:
             return []
-        try:
-            metadata = self._get_internal_metadata(file_path, modality)
-            if not metadata:
-                return []
-            lines = ["# Internal metadata:"]
-            for key, value in metadata.items():
-                if isinstance(value, str) and len(value) <= _MAX_META_VALUE_LEN and value.strip():
-                    lines.append(f"{key}: {value}")
-            lines.append("")
-            return lines if len(lines) > 2 else []
-        except Exception as exc:
-            print(f"[MemorySystem] Internal metadata failed for {file_path}: {exc}")
-        return []
-
-    def _get_internal_metadata(self, file_path, modality):
-        """Per-modality internal metadata getter (decoupled from *Search engines)."""
-        if modality == 'audio':
-            from modules.music.engine import get_audiofile_data
-            return get_audiofile_data(file_path)
-        if modality == 'image':
-            from modules.images.engine import get_image_metadata
-            return get_image_metadata(file_path)
-        # video / text: no rich internal metadata extractor today.
-        return {}
+        lines = ["# Internal metadata:"]
+        for key, value in metadata.items():
+            if isinstance(value, str) and len(value) <= _MAX_META_VALUE_LEN and value.strip():
+                lines.append(f"{key}: {value}")
+        lines.append("")
+        return lines if len(lines) > 2 else []
 
     def _collect_meta_section(self, file_path, file_name):
         try:

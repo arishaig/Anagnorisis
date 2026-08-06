@@ -30,8 +30,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     (np.ndarray of shape [chunks, dim], float)
     """
     import src.db_models as main_db_models
-    from modules.videos.engine import VideoSearch
-    from src.metadata_search import MetadataSearch
+    from src.metadata.search import get_metadata_search
     import fs
     import src.virtual_file_system as vfs
 
@@ -57,12 +56,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     if status_callback:
         status_callback(f"videos: found {total} user-rated videos.")
 
-    engine = VideoSearch(cfg=cfg)
-    engine.initiate(
-        models_folder=cfg.main.embedding_models_path,
-        cache_folder=cfg.main.cache_path,
-    )
-    meta_search = MetadataSearch(engine=engine)
+    meta_search = get_metadata_search(cfg)
 
     for i, entry in enumerate(entries):
         if not entry.file_path:
@@ -78,7 +72,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
 
         try:
             description = meta_search.generate_full_description(
-                entry.file_path, media_folder=media_dir, generate_desc_if_not_in_cache=False
+                entry.file_path, generate_desc_if_not_in_cache=False
             )
             if not description or len(description.strip()) < 10:
                 continue

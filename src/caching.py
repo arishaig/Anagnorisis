@@ -522,3 +522,30 @@ class TwoLevelCache:
         self.ram.set(key, value)
         if save_to_disk and self.disk is not None:
             self.disk.set(key, value)
+
+# ---------------------------------------------------------------------------
+# Process-wide instance registry
+# ---------------------------------------------------------------------------
+
+_TLC_SINGLETONS: Dict[str, "TwoLevelCache"] = {}
+_TLC_LOCK = threading.Lock()
+
+
+def get_two_level_cache(cache_dir: str, **kwargs) -> "TwoLevelCache":
+    """
+    Return a shared TwoLevelCache instance for this cache_dir within the process.
+    First caller's kwargs win; later calls ignore differing kwargs.
+
+    Two instances over one directory would each keep their own RAM tier, so a
+    value written through one would only be visible to the other after a disk
+    read. Always go through here rather than constructing TwoLevelCache directly
+    for a directory someone else may also use.
+    """
+    abs_dir = os.path.abspath(cache_dir)
+    with _TLC_LOCK:
+        inst = _TLC_SINGLETONS.get(abs_dir)
+        if inst is not None:
+            return inst
+        inst = TwoLevelCache(cache_dir=abs_dir, **kwargs)
+        _TLC_SINGLETONS[abs_dir] = inst
+        return inst

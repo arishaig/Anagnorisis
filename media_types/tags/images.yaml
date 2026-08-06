@@ -1,0 +1,370 @@
+# Zero-shot tag vocabulary for the "images" media type.
+#
+# Used by the embedding proxy: each tag is embedded once with the media type's
+# embedding model, and the tags closest to a file's embedding are written into
+# its metadata description. That gives files a searchable, ratable text
+# representation before the (much slower) OmniDescriptor pass reaches them.
+#
+# Rows are written as "- [a, b, c]" purely for compactness — the loader
+# flattens them into one flat list of tags.
+#
+# Extend freely. Changing the vocabulary changes its hash, which invalidates
+# every cached proxy section and, through it, every metadata embedding that
+# contained one — correct, but it means a full background re-index. Prefer
+# batching edits over trickling them in.
+
+# People & body
+- [portrait, person, people, child, baby, toddler, teenager, young adult, elderly person]
+- [man, woman, boy, girl, crowd, group of people, selfie, face, eyes, smile, nude, topless]
+- [muscular body, overweight, pregnant, couple, family, twins]
+
+# Nudity & adult content
+- [nudity, explicit content, nsfw, sexual content, erotic, suggestive, lingerie, bikini]
+- [clothed, fully clothed, partially clothed, underwear, swimwear]
+
+# Animals
+- [dog, cat, bird, horse, cow, pig, sheep, rabbit, fish, reptile, insect, spider, bear, lion]
+- [tiger, wolf, fox, deer, elephant, giraffe, monkey, dolphin, whale, shark, wildlife, pet]
+
+# Nature & landscape
+- [flower, tree, forest, grass, plant, mushroom, landscape, mountain, ocean, river, lake, beach]
+- [sky, clouds, sunset, sunrise, storm, lightning, rainbow, snow, ice, desert, jungle, swamp]
+- [waterfall, canyon, volcano, island, cave, field, meadow, coral reef, aurora]
+
+# Urban & architecture
+- [city, building, skyscraper, house, church, castle, bridge, road, street, alley, tunnel]
+- [interior, room, bedroom, kitchen, office, library, corridor, stairs, window, door, ceiling]
+- [ruins, graffiti, monument, statue, fountain, market, parking lot, airport, train station]
+
+# Objects & things
+- [food, fruit, vegetables, cake, pizza, sushi, drink, coffee, wine, beer, bottle, glass]
+- [car, motorcycle, bicycle, airplane, boat, train, truck, bus, spaceship, tank]
+- [gun, weapon, knife, sword, bomb, fire, explosion, smoke]
+- [book, phone, computer, screen, keyboard, camera, microphone, television, headphones]
+- [money, coin, trophy, gift, toy, ball, furniture, chair, table, lamp, mirror, clock, map]
+- [clothing, shoes, hat, glasses, jewelry, bag, umbrella, flag, sign, logo]
+
+# Musical instruments
+- [guitar, acoustic guitar, electric guitar, bass guitar, ukulele, banjo, mandolin, lute, resonator guitar]
+- [piano, grand piano, upright piano, keyboard instrument, synthesizer, organ, harpsichord, accordion, melodica]
+- [violin, cello, viola, double bass, harp, fiddle, string instrument]
+- [trumpet, trombone, French horn, tuba, cornet, flugelhorn, bugle, brass instrument]
+- [flute, clarinet, oboe, saxophone, bassoon, recorder, pan flute, woodwind instrument]
+- [drum kit, snare drum, bass drum, cymbal, hi-hat, bongo drums, conga, djembe, tambourine, cajon]
+- [xylophone, marimba, vibraphone, glockenspiel, steel drum, handpan, hang drum, kalimba]
+- [sitar, oud, erhu, shamisen, pipa, balalaika, bouzouki, kora, traditional instrument]
+- [harmonica, bagpipes, didgeridoo, theremin, hurdy-gurdy, music stand, sheet music, vinyl record, turntable, mixing console]
+
+# Sports & activities
+- [running, jogging, cycling, swimming, hiking, rock climbing, skateboarding, surfing, skiing, snowboarding]
+- [soccer, football, basketball, tennis, baseball, volleyball, golf, rugby, cricket, ice hockey, handball]
+- [boxing, martial arts, karate, judo, taekwondo, wrestling, gymnastics, yoga, weightlifting, crossfit]
+- [dancing, ballet, ballroom dancing, breakdancing, figure skating, horse riding, cheerleading, pole dancing]
+- [fishing, archery, hunting, camping, kayaking, canoeing, sailing, rowing, skydiving, paragliding, bungee jumping]
+- [stadium, sports field, gym, swimming pool, ski slope, basketball court, tennis court, golf course, boxing ring]
+
+# Food & drink details
+- [breakfast, brunch, lunch, dinner, dessert, snack, street food, fast food, fine dining, buffet]
+- [soup, salad, sandwich, burger, steak, grilled meat, seafood, pasta, noodles, risotto]
+- [bread, croissant, pastry, chocolate, ice cream, candy, cookies, pie, tart, donut, muffin, macaron]
+- [tacos, burrito, curry, stew, dumplings, ramen, kebab, hot dog, waffle, pancake, spring roll, falafel]
+- [cooking, baking, barbecue, picnic, food market, cafe interior, restaurant table, kitchen scene, food preparation]
+
+# Sky & space
+- [stars, moon, sun, planet, galaxy, nebula, meteor, satellite, rocket, space station]
+
+# Style & medium
+- [photograph, painting, drawing, sketch, illustration, digital art, 3D render, pixel art]
+- [watercolor, oil painting, pencil drawing, ink drawing, collage, mosaic, graffiti art]
+- [abstract art, realistic, minimalist, surreal, fantasy art, sci-fi art, horror art]
+- [anime, manga, cartoon, comic, caricature, concept art, game art, icon, logo design]
+- [black and white, sepia, vintage, retro, modern, futuristic, vaporwave aesthetic]
+
+# Colors & lighting
+- [colorful, monochrome, dark image, bright image, warm colors, cool colors, pastel colors]
+- [red, orange, yellow, green, blue, purple, pink, brown, white, black, gray, gold, silver]
+- [high contrast, low contrast, soft lighting, dramatic lighting, natural light, studio lighting]
+- [backlit, neon lights, candlelight, sunlight, shadows, silhouette, glowing, overexposed]
+
+# Composition & framing
+- [close-up, wide shot, aerial view, macro photography, underwater, overhead view, panorama]
+- [symmetrical composition, rule of thirds, blurred background, bokeh, sharp focus, depth of field]
+- [split image, double exposure, long exposure, motion blur, tilt-shift]
+
+# Quality & meta
+- [high resolution, low resolution, blurry, grainy, professional photography, amateur photo]
+- [screenshot, meme, infographic, chart, diagram, text in image, watermark, thumbnail]
+- [AI generated image, CGI, product photo, stock photo, news photo, medical image, x-ray]
+
+# Mood & aesthetics
+- [beautiful, cute, funny, creepy, scary, sad, dramatic, romantic, peaceful, chaotic, cozy]
+- [elegant, raw, aesthetic, nostalgic, mysterious, epic, serene, intense, whimsical, dark]
+- [cheerful, melancholic, tense, dreamy, powerful, minimalistic, maximalist, grungy]
+
+# Materials & textures
+- [wood texture, stone texture, metal surface, glass surface, fabric texture, leather texture, rubber surface]
+- [concrete wall, brick wall, marble surface, ceramic tile, plastic surface, paper texture, sand texture, gravel]
+- [smooth surface, rough texture, shiny surface, matte finish, translucent material, reflective surface, frosted glass]
+- [cracked surface, worn texture, polished surface, woven fabric, knitted texture, lace, velvet, silk, denim]
+
+# Human activities & emotions
+- [reading, writing, working on computer, sleeping, eating, drinking, laughing, crying, meditating, thinking]
+- [hugging, kissing, celebrating, praying, waving, pointing, jumping, climbing, stretching, running away]
+- [happy expression, sad expression, angry expression, surprised face, scared face, confused, focused, bored]
+- [child playing, wedding ceremony, birthday party, graduation, concert crowd, festival crowd, protest]
+
+# Science & technology
+- [laboratory, microscope, telescope, robot, drone, circuit board, satellite dish, solar panel, wind turbine, antenna]
+- [medical equipment, stethoscope, surgery, hospital room, X-ray scan, MRI machine, blood sample, DNA helix, pill]
+- [astronaut, rocket launch, moon surface, planet surface, observatory, spacewalk, comet, asteroid]
+- [factory, industrial machinery, construction site, power plant, server room, data center, control panel, conveyor belt]
+
+# Nature details
+- [moss, lichen, fern, cactus, succulent, tropical plant, bonsai, ivy, seaweed, coral, kelp, mangrove]
+- [butterfly, bee, ant, dragonfly, ladybug, caterpillar, snail, scorpion, firefly, praying mantis, beetle, moth]
+- [rock formation, cliff face, glacier, salt flat, hot spring, geyser, sand dune, tundra, cave interior]
+- [autumn leaves, cherry blossom, spring flowers, frost on leaves, morning dew, fog over water, pollen, spores]
+
+# Franchises, games & characters — people recall a name long before a description
+- [Pokemon, Pikachu, Nintendo, Super Mario, Legend of Zelda, Sonic the Hedgehog, Kirby, Metroid]
+- [Minecraft, Roblox, Fortnite, Among Us, Terraria, Stardew Valley, Undertale, Five Nights at Freddy's]
+- [Star Wars, Star Trek, Dune, Blade Runner, The Matrix, Alien franchise, Predator, Terminator]
+- [Marvel, DC Comics, Batman, Superman, Spider-Man, Iron Man, Wonder Woman, X-Men, The Joker]
+- [Harry Potter, Lord of the Rings, Game of Thrones, Doctor Who, Stranger Things, The Witcher]
+- [Disney, Pixar, Studio Ghibli, Looney Tunes, The Simpsons, SpongeBob, Rick and Morty, Adventure Time]
+- [Naruto, Dragon Ball, One Piece, Sailor Moon, Neon Genesis Evangelion, Attack on Titan, Death Note]
+- [Gundam, Hello Kitty, Digimon, Studio anime character, chibi character, mascot character, vtuber]
+- [Final Fantasy, Elden Ring, Dark Souls, Skyrim, Grand Theft Auto, Call of Duty, Counter-Strike]
+- [League of Legends, Dota, World of Warcraft, Overwatch, Halo, Portal, Half-Life, Cyberpunk 2077]
+- [LEGO, Barbie, My Little Pony, Transformers, Teenage Mutant Ninja Turtles, Power Rangers]
+- [fan art, cosplay, original character, character sheet, sprite sheet, video game screenshot]
+
+# Screenshots, interfaces & software
+- [desktop screenshot, mobile screenshot, phone screenshot, browser window, web page]
+- [user interface, app interface, dashboard, settings screen, login screen, error message, dialog box]
+- [terminal window, command line, source code editor, IDE screenshot, text editor, spreadsheet]
+- [chat conversation, messaging app, social media post, email client, video call, forum thread]
+- [file manager, operating system desktop, taskbar, notification, progress bar, loading screen]
+- [game menu, heads-up display, inventory screen, map screen, character select, scoreboard]
+- [installation wizard, blue screen of death, crash report, console output, log output, stack trace]
+
+# Memes & internet culture
+- [image macro, reaction image, caption meme, demotivational poster, rage comic, webcomic]
+- [emoji, sticker, avatar, profile picture, banner image, thumbnail art, clickbait thumbnail]
+- [ascii art, glitch art, deep fried image, cursed image, wholesome meme, shitpost]
+
+# Charts, diagrams & information graphics
+- [bar chart, line graph, pie chart, scatter plot, histogram, heatmap, area chart, candlestick chart]
+- [flowchart, mind map, org chart, timeline, venn diagram, network diagram, tree diagram]
+- [table of data, spreadsheet grid, statistics, dashboard chart, gantt chart]
+- [wireframe, mockup, user flow, architecture diagram, circuit diagram, exploded view]
+
+# Maps, plans & technical drawings
+- [world map, city map, road map, topographic map, nautical chart, subway map, satellite map]
+- [floor plan, blueprint, architectural drawing, elevation drawing, site plan, garden plan]
+- [schematic, wiring diagram, CAD drawing, technical illustration, patent drawing, assembly instructions]
+
+# Documents & paperwork, photographed or scanned
+- [scanned document, receipt, invoice, bank statement, contract, form, handwritten note, notebook page]
+- [business card, ticket, boarding pass, certificate, diploma, ID card, passport page, driver licence]
+- [whiteboard, sticky note, calendar page, planner page, to-do list, recipe card]
+- [book page, magazine page, newspaper page, comic page, manga page, letter, envelope, postcard]
+- [QR code, barcode, receipt printout, price tag, label, sign with text, poster with text]
+
+# Products, shopping & brands
+- [e-commerce listing, packaging, box art, bottle label, cosmetics, perfume bottle]
+- [brand mark, storefront, shop shelf, supermarket aisle, vending machine, price display]
+- [unboxing photo, catalogue page, advertisement, billboard, flyer, coupon, sale sign]
+
+# Vehicles & transport
+- [sedan, sports car, SUV, pickup truck, van, classic car, race car, formula one car, electric car]
+- [scooter, mountain bike, skateboard, scooter share, tractor, bulldozer]
+- [passenger airplane, fighter jet, helicopter, hot air balloon, glider]
+- [sailboat, yacht, cruise ship, cargo ship, ferry, submarine, canoe, jet ski]
+- [steam locomotive, high speed train, tram, subway car, double decker bus, taxi]
+- [car interior, engine bay, wheel, tyre, licence plate, parking, traffic jam, road trip]
+
+# Fashion, beauty & accessories
+- [dress, suit, jeans, t-shirt, jacket, coat, sweater, skirt, uniform, traditional costume]
+- [sneakers, boots, high heels, sandals, handbag, backpack, wallet, watch, ring, necklace, earrings]
+- [makeup, lipstick, nail art, hairstyle, haircut, beard, tattoo, piercing, manicure, skincare]
+- [fashion photography, runway, streetwear, vintage clothing, wedding dress]
+
+# Home, interiors & everyday objects
+- [living room, dining room, bathroom, garage, balcony, garden, patio, basement, attic, hallway]
+- [sofa, armchair, bed, wardrobe, bookshelf, desk setup, home office, kitchen appliance, refrigerator]
+- [cleaning supplies, laundry, tableware, cutlery, cookware, storage box, houseplant, candle, rug]
+- [renovation, construction work, moving boxes, clutter, tidy room, messy room, interior design]
+
+# Tools, hardware & electronics
+- [screwdriver, hammer, drill, wrench, saw, toolbox, workbench, hardware store, screws and bolts]
+- [smartphone, laptop, desktop computer, monitor, graphics card, motherboard, cable, adapter, router]
+- [game console, controller, VR headset, drone controller, camera body, lens, tripod]
+- [soldering, breadboard, arduino, raspberry pi, 3D printer, CNC machine, repair]
+
+# Art media & movements
+- [impressionism, expressionism, cubism, surrealism, art nouveau, art deco, baroque, renaissance art]
+- [ukiyo-e, woodblock print, calligraphy, typography art, line art, silhouette art, stencil, linocut]
+- [charcoal drawing, pastel drawing, gouache, acrylic painting, airbrush, marker illustration]
+- [vector illustration, flat design, isometric illustration, low poly, voxel art, generative art]
+- [storyboard, character design, environment concept, matte painting, sprite, tileset, UI kit]
+
+# Photography technique & camera
+- [long lens photo, wide angle, fisheye, portrait lens, macro lens, telephoto, drone photo, aerial photo]
+- [film photography, polaroid, instant photo, film grain, light leak, lens flare, chromatic aberration]
+- [HDR photo, panorama stitch, focus stacking, astrophotography, star trails, light painting]
+- [studio backdrop, softbox lighting, ring light, golden hour, blue hour, harsh midday light]
+
+# Events & occasions
+- [wedding, engagement, baby shower, funeral, graduation ceremony, prom, reunion]
+- [christmas, new year, halloween, easter, thanksgiving, ramadan, diwali, lunar new year, hanukkah]
+- [concert, festival, parade, carnival, fireworks, conference, trade show, market stall, protest march]
+- [vacation photo, camping trip, beach holiday, ski trip, sightseeing, museum visit]
+
+# Places, travel & landmarks
+- [Eiffel Tower, Statue of Liberty, Great Wall, pyramids, Colosseum, Taj Mahal, Big Ben, Golden Gate]
+- [airport terminal, hotel room, restaurant interior, cafe, bar, nightclub, casino]
+- [hospital, school classroom, university campus, church interior, temple, mosque, synagogue]
+- [office building, open plan office, warehouse, farm, barn, greenhouse, lighthouse, windmill]
+
+# Seasons, weather & time of day
+- [spring scene, summer scene, autumn scene, winter scene, snowfall, blizzard, heavy rain, flood]
+- [morning light, midday, afternoon, dusk, night scene, city at night, long exposure traffic]
+- [heat haze, drought, wildfire, hurricane, tornado, hailstorm, misty morning, frozen lake]
+
+# Text, typography & signage
+- [handwriting, cursive, printed text, headline, subtitle, watermark text]
+- [street sign, road sign, shop sign, neon sign, warning sign, no entry sign, direction sign]
+- [book cover, album cover, movie poster, game cover, magazine cover, poster design, flyer design]
+
+# Wallpapers, backgrounds & assets
+- [desktop wallpaper, phone wallpaper, abstract background, gradient background, seamless pattern]
+- [texture pack, brush pack, mockup template, presentation template, icon set]
+
+# Religion, symbolism & culture
+- [religious icon, cross, crescent, star of david, buddha statue, mandala, prayer, pilgrimage]
+- [national flag, coat of arms, heraldry, emblem, folk costume, tribal pattern, ritual, ceremony]
+
+# Medical, scientific & technical imagery
+- [x-ray image, MRI scan, CT scan, ultrasound, microscope slide, petri dish, anatomy diagram]
+- [chemical structure, periodic table, telescope image, nebula photo, satellite imagery, weather map]
+
+# Image quality, provenance & defects
+- [AI generated, stable diffusion output, midjourney style, upscaled image, deepfake, photobashed]
+- [jpeg artifacts, banding, moire pattern, dust and scratches, red eye, underexposed]
+- [duplicate image, cropped image, rotated image, mirrored image, collage sheet, contact sheet]
+- [old photograph, faded photo, sepia scan, damaged photo, restored photo, film scan, negative scan]
+
+# More franchises, games & studios
+- [Pokemon card, Charizard, Eevee, Mewtwo, Ash Ketchum, Team Rocket, pokeball, gym badge]
+- [Animal Crossing, Splatoon, Pikmin, Fire Emblem, Xenoblade, Bayonetta, Smash Bros, Mario Kart]
+- [Genshin Impact, Honkai, Arknights, Fate series, Persona series, Nier Automata, Monster Hunter]
+- [Resident Evil, Silent Hill, Bloodborne, Sekiro, Hollow Knight, Celeste, Hades game, Cuphead]
+- [Assassins Creed, Far Cry, Battlefield, Rainbow Six, Apex Legends, PUBG, Valorant, Rocket League]
+- [Sims, Cities Skylines, Factorio, RimWorld, Civilization, Age of Empires, Starcraft, Diablo]
+- [Pac-Man, Tetris, Space Invaders, Donkey Kong, Street Fighter, Mortal Kombat, Tekken, Castlevania]
+- [Studio Trigger, Kyoto Animation, Madhouse, Toei Animation, Cartoon Network, Nickelodeon, DreamWorks]
+- [Spirited Away, Totoro, Princess Mononoke, Akira, Ghost in the Shell, Cowboy Bebop, Berserk]
+- [Jujutsu Kaisen, Demon Slayer, My Hero Academia, Chainsaw Man, Hunter x Hunter, Bleach, Fullmetal Alchemist]
+- [Avatar the Last Airbender, Gravity Falls, Steven Universe, Regular Show, Futurama, Family Guy]
+- [Breaking Bad, The Office, Friends, Seinfeld, Twin Peaks, Black Mirror, Severance, The Mandalorian]
+- [Jurassic Park, Back to the Future, Indiana Jones, James Bond, Mission Impossible, Fast and Furious]
+- [Ghostbusters, Beetlejuice, Gremlins, The Shining, Nightmare on Elm Street, Scream, Saw franchise]
+- [Winnie the Pooh, Mickey Mouse, Donald Duck, Snow White, Cinderella, Frozen, Moana, Encanto]
+- [Shrek, Minions, Toy Story, Finding Nemo, Wall-E, Up, Inside Out, Spirited character design]
+
+# Mythology, folklore & fantasy creatures
+- [dragon, phoenix, griffin, unicorn, pegasus, centaur, minotaur, sphinx, chimera, kraken]
+- [elf, dwarf, orc, goblin, troll, ogre, giant, fairy, pixie, gnome, leprechaun, mermaid]
+- [vampire, werewolf, zombie, ghost, skeleton warrior, lich, demon, angel, valkyrie, banshee]
+- [wizard, witch, sorcerer, necromancer, paladin, knight, barbarian, ranger, bard, druid]
+- [Greek mythology, Norse mythology, Egyptian mythology, Japanese yokai, Slavic folklore, Celtic myth]
+- [golem, familiar, spirit animal, shapeshifter, djinn, cyclops, hydra, basilisk, cerberus]
+- [alien creature, extraterrestrial, robot character, android, cyborg, mecha, kaiju, monster design]
+
+# Dinosaurs & prehistoric life
+- [dinosaur, tyrannosaurus, triceratops, velociraptor, stegosaurus, brachiosaurus, pterodactyl]
+- [fossil, dinosaur skeleton, amber fossil, trilobite, ammonite, mammoth, sabre tooth cat, cave painting]
+
+# Animal breeds & wildlife detail
+- [golden retriever, labrador, german shepherd, poodle, husky, corgi, chihuahua, bulldog, beagle]
+- [persian cat, siamese cat, maine coon, tabby cat, black cat, kitten, puppy, hamster, guinea pig]
+- [parrot, budgerigar, cockatoo, owl, eagle, hawk, falcon, penguin, flamingo, peacock, swan, duck]
+- [goldfish, koi, clownfish, seahorse, jellyfish, octopus, squid, starfish, crab, lobster, shrimp]
+- [turtle, tortoise, snake, python, cobra, lizard, gecko, chameleon, iguana, crocodile, alligator]
+- [zebra, rhinoceros, hippopotamus, gazelle, antelope, buffalo, bison, camel, llama, alpaca, goat]
+- [panda, koala, sloth, otter, beaver, raccoon, squirrel, hedgehog, bat, kangaroo, meerkat, lemur]
+- [butterfly wing, bee on flower, wasp, mosquito, grasshopper, cicada, centipede]
+
+# Plants, flowers & fungi
+- [rose, tulip, sunflower, daisy, lily, orchid, lavender, poppy, daffodil, peony, chrysanthemum]
+- [oak tree, pine tree, birch, willow, maple, palm tree, bamboo, cherry tree, olive tree, baobab]
+- [cactus garden, succulent arrangement, bonsai tree, terrarium, hanging plant, vine, climbing plant]
+- [wild mushroom, toadstool, chanterelle, morel, fly agaric, mould, algae, lichen on rock]
+- [vegetable garden, herb garden, flower bed, orchard, vineyard, rice paddy, wheat field, cornfield]
+
+# Food & drink by cuisine
+- [italian food, french cuisine, spanish tapas, greek food, turkish food, lebanese food, moroccan food]
+- [chinese food, japanese food, korean food, thai food, vietnamese food, indian food, indonesian food]
+- [mexican food, brazilian food, peruvian food, caribbean food, ethiopian food, nigerian food]
+- [american diner food, british food, german food, polish food, russian food, ukrainian food]
+- [ramen bowl, pho, spring rolls, paella, lasagna, gnocchi, baguette]
+- [barbecue ribs, roast chicken, fried chicken, fish and chips, seafood platter, oysters, caviar]
+- [smoothie, milkshake, cocktail, mocktail, espresso, latte art, cappuccino, tea ceremony, herbal tea]
+- [charcuterie board, cheese platter, salad bowl, breakfast plate, brunch spread, buffet table]
+- [vegan meal, vegetarian dish, gluten free, keto meal, meal prep containers, lunchbox, street snack]
+
+# Professions & activities
+- [doctor, nurse, surgeon, dentist, pharmacist, veterinarian, paramedic, therapist, scientist]
+- [teacher, professor, student, librarian, researcher, engineer, architect, programmer, designer]
+- [chef, baker, barista, waiter, bartender, farmer, fisherman, butcher, tailor, hairdresser]
+- [police officer, firefighter, soldier, pilot, flight attendant, sailor, security guard]
+- [carpenter, plumber, electrician, mechanic, welder, mason, painter and decorator, gardener]
+- [lawyer, judge, accountant, banker, salesperson, receptionist, manager, entrepreneur, journalist]
+- [musician, actor, dancer, photographer, filmmaker, artist at work, sculptor, potter, blacksmith]
+
+# Sports & recognisable gear
+- [football pitch, tennis racket, basketball hoop, baseball bat, golf club, hockey stick, cricket bat]
+- [running shoes, dumbbell, barbell, kettlebell, yoga mat, treadmill, exercise bike, punching bag]
+- [helmet, jersey, medal, trophy cabinet, podium, referee, scoreboard display, starting line]
+- [marathon, triathlon, motorsport, rally car, cycling race, sailing regatta, esports tournament]
+
+# Costumes, uniforms & historical dress
+- [medieval armour, knight helmet, samurai armour, viking outfit, roman soldier, pirate costume]
+- [military uniform, naval uniform, police uniform, nurse uniform, school uniform, chef whites]
+- [victorian dress, 1920s flapper, 1950s dress, 1970s fashion, 1980s fashion, 1990s fashion]
+- [kimono, sari, hanbok, dirndl, kilt, poncho, headscarf, turban, sombrero, traditional headdress]
+- [halloween costume, superhero costume, mascot suit, carnival costume, cosplay wig, face paint]
+
+# Architecture & interior styles
+- [gothic architecture, romanesque, neoclassical building, brutalist, modernist, postmodern building]
+- [scandinavian interior, minimalist interior, industrial loft, bohemian decor, mid century modern]
+- [farmhouse style, cottage interior, japanese interior, moroccan interior, art deco interior]
+- [skyscraper facade, glass curtain wall, timber frame, thatched roof, stone cottage, adobe house]
+- [temple architecture, pagoda, minaret, dome, arch, colonnade, spiral staircase, atrium, courtyard]
+
+# Space, astronomy & earth
+- [milky way, solar eclipse, lunar eclipse, supermoon, northern lights, meteor shower, constellation]
+- [mars surface, jupiter, saturn rings, black hole render, space telescope image, deep field image]
+- [earth from space, weather satellite image, hurricane from space, night lights from orbit]
+- [volcanic eruption, lava flow, earthquake damage, tsunami, landslide, sinkhole, glacier calving]
+
+# Tech, brands & devices
+- [apple device, iphone, macbook, android phone, samsung galaxy, windows laptop, chromebook]
+- [playstation, xbox, nintendo switch, steam deck, gaming pc, mechanical keyboard, gaming mouse]
+- [smart watch, fitness tracker, wireless earbuds, bluetooth speaker, smart speaker]
+- [server rack, data centre, network switch, ethernet cable, usb drive, external hard drive, ssd]
+- [electric scooter, robot vacuum, smart thermostat, security camera device, solar inverter]
+
+# Hobbies, crafts & collections
+- [knitting, crochet, sewing machine, embroidery, quilting, weaving, macrame, cross stitch]
+- [woodworking, carving, pottery wheel, ceramics glaze, glassblowing, jewellery making, resin art]
+- [model kit, scale model, model train, rc car, drone build, lego build, puzzle, jigsaw]
+- [board game, card game, chess board, dice set, tabletop rpg, miniatures, trading cards, stamps]
+- [coin collection, vinyl collection, book collection, action figures, plush toys, antiques]
+- [fishing gear, hunting gear, camping gear, climbing gear, diving gear, surfboard, snowboard]
+
+# Colour palettes & moods
+- [pastel palette, neon palette, earth tones, jewel tones, muted colours, saturated colours]
+- [duotone, monochrome blue, monochrome green, warm palette, cool palette, complementary colours]
+- [dark academia, cottagecore, y2k aesthetic, cyberpunk aesthetic, steampunk, solarpunk, liminal space]

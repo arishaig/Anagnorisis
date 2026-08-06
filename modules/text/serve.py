@@ -4,7 +4,7 @@ from modules.text.engine import TextSearch
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager 
 from src.common_filters import CommonFilters
-from src.metadata_search import MetadataSearch
+from src.metadata.search import get_metadata_search
 
 import modules.text.db_models as db_models
 from src.universal_evaluator import UniversalEvaluator
@@ -14,7 +14,6 @@ from omegaconf import OmegaConf
 import src.db_models as main_db_models
 import fs
 import src.virtual_file_system as vfs
-# from src.module_helpers import make_scheduled_rating_check, make_scheduled_description_check
 
 from src.utils import SortingProgressCallback, EmbeddingGatheringCallback
 
@@ -85,9 +84,11 @@ class TextModuleServer:
             db_schema=main_db_models.FilesLibrary,
         )
 
-        # Create metadata search engine
+        # Metadata search is one process-wide, module-independent instance; it
+        # resolves each file's media type (and with it the tag vocabulary and
+        # embedding proxy) from its extension.
         self.cse.show_loading_status('Initializing metadata search...')
-        self.metadata_search_engine = MetadataSearch(engine=self.text_search_engine)
+        self.metadata_search_engine = get_metadata_search(self.cfg)
 
         # Create common filters instance
         self.cse.show_loading_status('Setting up filters...')
@@ -99,9 +100,6 @@ class TextModuleServer:
             db_schema=main_db_models.FilesLibrary,
         )
 
-        # _check_and_submit_description = make_scheduled_description_check(
-        #     app, 'Text', self.file_manager, metadata_search_engine, cfg, 'text'
-        # )
 
         # Bind all Socket.IO events to their respective class methods
         self.cse.show_loading_status('Registering socket events...')
@@ -134,10 +132,6 @@ class TextModuleServer:
         Scheduler(app, interval_minutes=rating_update_interval, fn=self.update_model_ratings_schedule,
                 name='Text: rate unrated files',
                 check_fn=_check_if_model_rating_needed, start_immediately=True)
-
-        # desc_interval = OmegaConf.select(cfg, 'text.description_update_interval_minutes', default=None)
-        # Scheduler(app, interval_minutes=desc_interval, fn=_check_and_submit_description,
-        #         name='Text: describe undescribed files')
 
         # TODO: Schedule to extract embeddings from files for semantic search to work
     
@@ -264,7 +258,6 @@ class TextModuleServer:
                 _progress[0] = (ind + 1) / len(files_list) * 0.7
                 description = self.metadata_search_engine.generate_full_description(
                     file_path,
-                    media_folder=self.media_directory,
                     generate_desc_if_not_in_cache=False,
                 )
                 self.metadata_search_engine.omni_descriptor.unload()

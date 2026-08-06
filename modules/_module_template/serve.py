@@ -9,7 +9,7 @@ Responsibilities:
   2. Instantiate and initialise the search engine (engine.py).
   3. Load the universal evaluator for AI-based scoring.
   4. Set up FileManager for browsing / hashing / paginating files.
-  5. Set up MetadataSearch and CommonFilters.
+  5. Set up metadata search and CommonFilters.
   6. Register Flask routes (e.g. serving raw media files to the browser).
   7. Register SocketIO event handlers for every action the frontend needs.
   8. Define and schedule background tasks (rating, description generation).
@@ -36,7 +36,7 @@ import modules._module_template.db_models as db_models
 # Shared framework utilities
 from src.socket_events import CommonSocketEvents
 from src.common_filters import CommonFilters
-from src.metadata_search import MetadataSearch
+from src.metadata.search import get_metadata_search
 from src.scheduler import Scheduler
 from src.utils import convert_size, SortingProgressCallback, EmbeddingGatheringCallback
 
@@ -119,9 +119,14 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
         db_schema=db_models.ExampleLibrary,
     )
 
-    # --- 7. Metadata search engine (optional) ----------------------------
+    # --- 7. Metadata search ----------------------------------------------
+    # One process-wide, module-independent instance. It resolves each file's
+    # media type from its extension, so this module needs no metadata config of
+    # its own — declare `media_types:` in config.defaults.yaml and the file
+    # extensions, tag vocabulary, internal-metadata reader and background
+    # description/embedding passes all follow from media_types/.
     common_socket_events.show_loading_status('Initializing metadata search...')
-    metadata_search_engine = MetadataSearch(engine=search_engine)
+    metadata_search_engine = get_metadata_search(cfg)
 
     # --- 8. Common filters -----------------------------------------------
     common_socket_events.show_loading_status('Setting up filters and routes...')
@@ -134,7 +139,7 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
 
         This implementation follows the same pattern used by images/music/videos/text modules:
           1. For each file, check if a DB entry exists with a current model_hash.
-          2. If not, generate a text description via MetadataSearch.
+          2. If not, generate a text description via metadata search.
           3. Embed the description and predict a rating with the evaluator.
           4. Save to DB (create or update the row).
         """
@@ -148,8 +153,7 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
             for file_path, file_hash in files_list:
                 try:
                     description = metadata_search_engine.generate_full_description(
-                        file_path, media_directory,
-                        generate_desc_if_not_in_cache=False,
+                        file_path, generate_desc_if_not_in_cache=False,
                     )
                     if not description:
                         continue
@@ -205,33 +209,6 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
             files_list = candidates[:batch_size]
             ctx.update(0.0, f'Rating {len(files_list)} of {total} files...')
             update_model_ratings(files_list)
-
-        return app.task_manager.submit(f'{base_name} ({label})', task)
-
-    def _check_and_submit_description():
-        """Scheduled: find undescribed files and submit a description task if needed."""
-        all_files = example_file_manager.list_all_files()
-        candidates = metadata_search_engine.get_undescribed_files(all_files)
-        if candidates is None:
-            candidates = all_files
-        base_name = 'Example: describe undescribed files'
-        batch_size = OmegaConf.select(cfg, 'example.description_update_batch_size', default=100)
-        batch_size = min(batch_size, len(candidates))
-        batch = candidates[:batch_size]
-        n_total = len(candidates)
-        label = f'{batch_size} of {n_total}' if batch_size < n_total else str(n_total)
-
-        def task(ctx):
-            try:
-                for i, fp in enumerate(batch):
-                    ctx.check()
-                    ctx.update(i / len(batch), f'Describing file {i + 1}/{len(batch)}...')
-                    try:
-                        metadata_search_engine._get_auto_description(fp, generate_desc_if_not_in_cache=False)
-                    except Exception as e:
-                        print(f'[Example: describe] Failed for {fp}: {e}')
-            finally:
-                metadata_search_engine.omni_descriptor.unload()
 
         return app.task_manager.submit(f'{base_name} ({label})', task)
 
@@ -368,7 +345,7 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
         """Generate a full AI-powered metadata description for a single file."""
         nonlocal media_directory
         full_path = os.path.join(media_directory, file_path)
-        content = metadata_search_engine.generate_full_description(full_path, media_directory, generate_desc_if_not_in_cache=False)
+        content = metadata_search_engine.generate_full_description(full_path, generate_desc_if_not_in_cache=False)
         return {"content": content, "file_path": file_path}
 
     # --- Finish initialisation & schedule background tasks ----------------
@@ -380,14 +357,6 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
               name='Example: rate unrated files',
               check_fn=lambda: evaluator.hash is not None and len(example_file_manager.get_unrated_files(evaluator.hash)) > 0)
 
-    desc_interval = OmegaConf.select(cfg, 'example.description_update_interval_minutes', default=None)
-
-    def _example_desc_check():
-        all_files = example_file_manager.list_all_files()
-        if not all_files:
-            return False
-        candidates = metadata_search_engine.get_undescribed_files(all_files)
-        return candidates is None or len(candidates) > 0
-
-    Scheduler(app, interval_minutes=desc_interval, fn=_check_and_submit_description,
-              name='Example: describe undescribed files', check_fn=_example_desc_check)
+    # Descriptions and metadata embeddings need no scheduler here: the app-wide
+    # MetadataIndexer (src/metadata/indexer.py) covers every media type on every
+    # configured server in a single pass.

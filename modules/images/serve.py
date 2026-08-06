@@ -11,11 +11,10 @@ from modules.images.engine import ImageSearch
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager
 from src.common_filters import CommonFilters
-from src.metadata_search import MetadataSearch
+from src.metadata.search import get_metadata_search
 
 import modules.images.db_models as db_models
 from src.universal_evaluator import UniversalEvaluator
-from src.embedding_proxy import EmbeddingProxyGenerator
 
 import src.db_models as main_db_models
 import src.virtual_file_system as vfs
@@ -107,24 +106,11 @@ class ImageModuleServer:
             db_schema=main_db_models.FilesLibrary,
         )
 
-        # Create metadata search engine
+        # Metadata search is one process-wide, module-independent instance; it
+        # resolves each file's media type (and with it the tag vocabulary and
+        # embedding proxy) from its extension.
         self.cse.show_loading_status('Initializing metadata search...')
-        self.metadata_search_engine = MetadataSearch(engine=self.images_search_engine)
-
-        # Set up embedding proxy so that files without an OmniDescriptor description
-        # still receive a meaningful text representation (SigLIP tags + fingerprint).
-        self.cse.show_loading_status('Initializing embedding proxy...')
-        _tag_list = list(OmegaConf.select(self.cfg, 'images.embedding_tags', default=[]) or [])
-        _tag_threshold_raw = OmegaConf.select(self.cfg, 'images.embedding_tags_threshold', default=0.20)
-        _tag_threshold = float(_tag_threshold_raw) if _tag_threshold_raw is not None else None
-        self.images_proxy_gen = EmbeddingProxyGenerator(
-            engine=self.images_search_engine,
-            tag_list=_tag_list,
-            threshold=_tag_threshold,
-            cache_path=self.cfg.main.cache_path,
-            model_name=getattr(self.cfg.image_embedder, 'model_name', 'SigLIP'),
-        )
-        self.metadata_search_engine.embedding_proxy = self.images_proxy_gen
+        self.metadata_search_engine = get_metadata_search(self.cfg)
 
         # Create common filters instance
         self.cse.show_loading_status('Setting up filters...')
@@ -163,7 +149,7 @@ class ImageModuleServer:
 
         # .meta sidecar handlers + full description handler (shared helper)
         src.module_helpers.register_meta_handlers(
-            self.socketio, 'images', lambda: self.media_directory, self.metadata_search_engine
+            self.socketio, 'images', self.metadata_search_engine
         )
 
     def _register_schedulers(self):
@@ -200,17 +186,9 @@ class ImageModuleServer:
             and len(self.file_manager.get_unrated_files(self.images_evaluator.hash)) > 0,
         )
 
-        # Proactively describe undescribed files using the shared factory
-        _check_and_submit_description = src.module_helpers.make_scheduled_description_check(
-            app, 'Images', self.file_manager, self.metadata_search_engine, cfg, 'images'
-        )
-        desc_interval = OmegaConf.select(cfg, 'images.description_update_interval_minutes', default=None)
-        Scheduler(
-            app,
-            interval_minutes=desc_interval,
-            fn=_check_and_submit_description,
-            name='Images: describe undescribed files',
-        )
+        # Descriptions and metadata embeddings are filled by the app-wide
+        # MetadataIndexer (src/metadata/indexer.py), which covers every media
+        # type on every server in one pass.
 
 
 
@@ -400,18 +378,6 @@ class ImageModuleServer:
             files_list, callback=_embedding_callback, media_folder=self.media_directory
         )  # [N, D] tensor
 
-        # Step 2: Pre-populate proxy cache before the Jina embedding phase.
-        _progress[0] = 0.3
-        _status("Preparing embedding proxies...")
-        for i, fp in enumerate(files_list):
-            _check_if_paused()
-            try:
-                self.images_proxy_gen.compute_proxy_section(
-                    files_list_hash_map[fp], embeddings[i].cpu().numpy()
-                )
-            except Exception as e:
-                print(f"[ImageModuleServer] Proxy generation failed for {fp}: {e}")
-            _progress[0] = 0.3 + (i + 1) / len(files_list) * 0.1
 
         # Step 3: Build text descriptions (includes proxy section) + Jina embed
         _progress[0] = 0.4
@@ -425,7 +391,6 @@ class ImageModuleServer:
             try:
                 description = self.metadata_search_engine.generate_full_description(
                     full_path,
-                    media_folder=self.media_directory,
                     generate_desc_if_not_in_cache=False,
                 )
                 chunk_embeddings = self.metadata_search_engine.text_embedder.embed_text(description)

@@ -1,6 +1,21 @@
 # Change History
 
 
+### Version 0.4.7 (06.08.2026)
+*  **Media types:**
+    *   File extensions and tag vocabularies moved out of `config.yaml` into a new `media_types/` folder, one entry per kind of content: audio, images, videos, text and documents. `config.yaml` shrank from 267 lines to about 70.
+    *   Metadata search no longer belongs to any module. It recognises a file by its extension, so it can describe and index anything on any server, whether or not a module handles that kind of file.
+*  **Tags:**
+    *   Tag vocabularies grew from ~1,100 to ~9,100 tags and now cover videos, text and documents too. Images gained franchises, screenshots, memes, charts and scanned paperwork; audio gained podcasts, audiobooks, speech and everyday sounds. The aim was to describe what actually sits on a normal machine, not just music and photographs.
+*  **Indexing:**
+    *   Descriptions and search embeddings are now built by two shared background passes instead of one per module. A single sweep covers every server, local and remote, and every kind of file at once.
+    *   Files are picked at random rather than folder by folder, so every folder gets some results early instead of the last ones waiting for days.
+*  **Descriptions:**
+    *   Image metadata (size, format, EXIF) was never read successfully and was stored as an error message. Real values appear now.
+*  **Servers:**
+    *   Fixed a crash that happened when a remote server became unreachable while files were being listed.
+    *   One shared server monitor instead of a separate background checker per module.
+
 ### Version 0.4.6 (23.07.2026)
 *  **Remote-aware metadata handling:**
     *   Metadata-based search (`semantic-metadata` mode) no longer triggers silent downloads of remote files. Cache keys for auto-descriptions now use only file stats (path + size + mtime + model hash) instead of a content hash, so the first lookup after a restart — or the first time a remote file is ever seen — only performs a cheap stat, never reads file content.

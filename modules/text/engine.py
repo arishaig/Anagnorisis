@@ -19,71 +19,13 @@ import modules.text.db_models as db_models
 import src.db_models as main_db_models
 from src.base_search_engine import BaseSearchEngine
 from src.text_embedder import TextEmbedder 
+from src.metadata.extractors import read_stat_metadata
 
 from scipy.spatial.distance import cosine
 import src.virtual_file_system as vfs
 import fs
 
 
-
-def get_text_metadata(file_path: str) -> dict:
-    """
-    Extracts basic metadata from a text file via VFS-aware stat calls.
-
-    Text files have no embedded metadata block (unlike images' EXIF or
-    audio's ID3 tags), so we expose only filesystem-level information
-    that helps the embedding understand the file:
-
-      - file_size        : integer byte count
-      - modification_time: ISO 8601 datetime of last modification
-      - creation_time    : ISO 8601 datetime of creation (if FS supports it)
-      - access_time      : ISO 8601 datetime of last access (if FS supports it)
-      - extension        : lowercase file extension (txt, md, html, …)
-      - content_type     : human-readable hint derived from extension
-
-    File content is NEVER read, so this stays O(1) regardless of file
-    size — important since text libraries often contain multi-GB logs.
-
-    All values are stringified so that ``MetadataSearch.generate_full_description``
-    can drop them straight into the embedding payload.
-    """
-    metadata = {}
-    try:
-        base_url, path_in_fs = vfs.resolve_base_and_path_from_url(file_path)
-
-        with fs.open_fs(base_url) as my_fs:
-            info = my_fs.getinfo(path_in_fs, namespaces=['details'])
-
-            # File size — cheap, useful as a "document size" hint.
-            if getattr(info, 'size', None) is not None:
-                metadata['file_size'] = f"{info.size} bytes"
-
-            # Timestamps — stringified via isoformat() so they fit
-            # directly into the embedding text payload.
-            for attr, key in (
-                ('modified', 'modification_time'),
-                ('created',  'creation_time'),
-                ('accessed', 'access_time'),
-            ):
-                dt = getattr(info, attr, None)
-                if dt is None:
-                    continue
-                metadata[key] = (
-                    dt.isoformat() if hasattr(dt, 'isoformat') else str(dt)
-                )
-
-            # Extension — the single most useful field for text files.
-            # Cheapest possible computation, and it tells the embedding
-            # "this is markdown" / "this is JSON" before it has seen
-            # a single line of content.
-            ext = os.path.splitext(path_in_fs)[1].lstrip('.').lower()
-            if ext:
-                metadata['extension'] = ext
-
-    except Exception as e:
-        print(f"Error extracting metadata from {file_path}: {e}")
-
-    return metadata
 
 class TextSearch(BaseSearchEngine):
     def __init__(self, cfg=None):
@@ -126,7 +68,7 @@ class TextSearch(BaseSearchEngine):
         return self._query_embedder
         
     def _get_metadata(self, file_path):
-        return get_text_metadata(file_path)
+        return read_stat_metadata(file_path)
 
     def _get_db_model_class(self):
         return main_db_models.FilesLibrary

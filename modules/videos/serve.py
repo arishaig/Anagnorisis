@@ -20,7 +20,7 @@ from modules.videos.engine import VideoSearch
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager
 from src.common_filters import CommonFilters
-from src.metadata_search import MetadataSearch
+from src.metadata.search import get_metadata_search
 
 import modules.videos.db_models as db_models
 from src.universal_evaluator import UniversalEvaluator
@@ -34,7 +34,6 @@ from src.scheduler import Scheduler
 from src.module_helpers import (
     register_meta_handlers,
     make_scheduled_rating_check,
-    make_scheduled_description_check,
 )
 
 
@@ -138,9 +137,11 @@ class VideoModuleServer:
             db_schema=main_db_models.FilesLibrary,
         )
 
-        # Create metadata search engine (no EmbeddingProxyGenerator — VideoSearch is a stub)
+        # Metadata search is one process-wide, module-independent instance; it
+        # resolves each file's media type (and with it the tag vocabulary and
+        # embedding proxy) from its extension.
         self.cse.show_loading_status('Initializing metadata search...')
-        self.metadata_search_engine = MetadataSearch(engine=self.videos_search_engine)
+        self.metadata_search_engine = get_metadata_search(self.cfg)
 
         # Create common filters instance
         self.cse.show_loading_status('Setting up filters...')
@@ -182,7 +183,7 @@ class VideoModuleServer:
 
         # .meta sidecar handlers + full description handler (shared helper)
         register_meta_handlers(
-            self.socketio, 'videos', lambda: self.media_directory, self.metadata_search_engine
+            self.socketio, 'videos', self.metadata_search_engine
         )
 
         # HLS streaming Flask routes
@@ -216,16 +217,9 @@ class VideoModuleServer:
             and len(self.file_manager.get_unrated_files(self.videos_evaluator.hash)) > 0,
         )
 
-        _check_and_submit_description = make_scheduled_description_check(
-            app, 'Videos', self.file_manager, self.metadata_search_engine, cfg, 'videos'
-        )
-        desc_interval = OmegaConf.select(cfg, 'videos.description_update_interval_minutes', default=None)
-        Scheduler(
-            app,
-            interval_minutes=desc_interval,
-            fn=_check_and_submit_description,
-            name='Videos: describe undescribed files',
-        )
+        # Descriptions and metadata embeddings are filled by the app-wide
+        # MetadataIndexer (src/metadata/indexer.py), which covers every media
+        # type on every server in one pass.
 
     def _register_background_tasks(self):
         """One-time migration task.
@@ -408,7 +402,6 @@ class VideoModuleServer:
             try:
                 description = self.metadata_search_engine.generate_full_description(
                     full_path,
-                    media_folder=self.media_directory,
                     generate_desc_if_not_in_cache=False,
                 )
                 chunk_embeddings = self.metadata_search_engine.text_embedder.embed_text(description)
