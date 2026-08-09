@@ -29,6 +29,20 @@ Here is the main pipeline of working with the project:
 You repeat these steps again and again, getting each time model that better and better aligns to your preferences.  
 
 The big vision of this project is to provide a platform that creates a local, private model of your interests. That likes what you like and sees importance where you would see it. Then you can use this model to search and filter local and global information on your behalf in a way you would do it yourself but in a much faster and efficient way. Making this platform (in the future) a go to place to see news, recommendations and insights, and so on, tailored specifically for you. As the internet gets populated with bots and AI slop, a platform like this might create a necessary filter to be able to navigate in this chaotic information space efficiently.
+## How search works
+
+There are three search modes, that are used for different kind of search:
+
+- **Filename-based search** is a typical fuzzy-matching search that compares your query with file names, both local and remote.
+- **Content-based search** embeds the *file itself* with the embedding model and compares embedding of your query with the embeddings of files to find the best matches. Only local files are supported for that kind of search to avoid unsolicited downloads from the remote servers. 
+- **Metadata-based search** embeds a *text description* of the file: its name and path, an automatic description from the descriptor model (only local), zero-shot tags (only local), internal metadata (EXIF, ID3 tags, etc.) (also only local), and the contents of its `{filename}.meta` sidecar (local and remote in case such file exists). This special file allows you to describe local files subjectively (i.e. "photo of MY grandpa") and have a completely personalized search because of it. For the remote files it acts as a lightweight proxy for an actual file content, allowing for semantic search and recommendation in distributed networks.
+
+Two rules the project holds to:
+
+- **Searching never uses the GPU.** Your query is embedded on the CPU, in-process. The GPU is used only by background tasks you can see and pause on the Task Manager page.
+- **Remote files are never downloaded automatically.** Background indexing reads only local files.
+
+Because searching reads from the index rather than building it, files that have not been indexed yet simply do not appear in results. The status bar reports how many are still pending.
 
 ## Running from Docker
 The preferred way to run the project is from Docker. This should be much more stable than running it from the local environment, especially on Windows.
@@ -183,20 +197,7 @@ See [`modules/_module_template/`](modules/_module_template/) for a fully documen
 ## Security notes
 The project is meant to be run on the localhost only for now. The default configuration ip address is set to `127.0.0.1` inside `docker-compose.override.yaml` file. This means that the application will only be accessible from the machine it is running on. If you want to access it from other devices on your local network, you can change the port binding in your `docker-compose.override.yaml` to `0.0.0.0:5001:5001`. You can even tunnel it to the internet using services like [ngrok](https://ngrok.com/) or [cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/). However, I would strongly recommend against exposing the service to the internet (unless you are 100% know what you are doing) as there is no proper security work has been done yet. 
 
-## How search works
 
-There are three search modes, that are used for different kind of search:
-
-- **Filename-based search** is a typical fuzzy-matching search that compares your query with file names, both local and remote.
-- **Content-based search** embeds the *file itself* with the embedding model and compares embedding of your query with the embeddings of files to find the best matches. Only local files are supported for that kind of search to avoid unsolicited downloads from the remote servers. 
-- **Metadata-based search** embeds a *text description* of the file: its name and path, an automatic description from the descriptor model (only local), zero-shot tags (only local), internal metadata (EXIF, ID3 tags, etc.) (also only local), and the contents of its `{filename}.meta` sidecar (local and remote in case such file exists).
-
-Two rules the project holds to:
-
-- **Searching never uses the GPU.** Your query is embedded on the CPU, in-process. The GPU is used only by background tasks you can see and pause on the Task Manager page.
-- **Remote files are never downloaded automatically.** Background indexing reads only local files.
-
-Because searching reads from the index rather than building it, files that have not been indexed yet simply do not appear in results. The status bar reports how many are still pending.
 
 ## Models
 The project runs two models:
