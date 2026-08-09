@@ -30,7 +30,8 @@ from src.caching import get_two_level_cache
 from src.metadata import extractors, models
 from src.metadata.media_types import MediaType, get_registry
 from src.omni_descriptor import OmniDescriptor
-from src.text_embedder import TextEmbedder
+from src.content_search import _as_query_vector
+from src.omni_embedder import cosine_similarity, get_omni_embedder, get_query_embedder
 
 
 class MetadataSearch:
@@ -46,32 +47,15 @@ class MetadataSearch:
     def __init__(self, cfg):
         self.cfg = cfg
         self.types = get_registry(cfg)
-        self.text_embedder = TextEmbedder(cfg)
+        # The GPU worker builds the index; the CPU tower answers queries.
+        self.embedder = get_omni_embedder(cfg)
+        self.query_embedder = get_query_embedder(cfg)
         self.omni_descriptor = OmniDescriptor(cfg)
 
         self._fast_cache = get_two_level_cache(
             cache_dir=os.path.join(cfg.main.cache_path, 'metadata_cache'),
             name="metadata_search",
         )
-        self._text_embedder_cpu = None  # lazy CPU query embedder (text)
-
-    @property
-    def text_embedder_cpu(self):
-        """Lazy-loaded CPU text embedder for query embedding during search.
-
-        Single, process-wide instance per (model, type) tuple — held in
-        src.query_embedder.QueryEmbedder._instances so re-opening the page
-        does not re-load the model.
-        """
-        if self._text_embedder_cpu is None:
-            from src.query_embedder import QueryEmbedder
-            self._text_embedder_cpu = QueryEmbedder.get_instance(
-                model_name=self.cfg.text_embedder.model_name,
-                models_folder=self.cfg.main.embedding_models_path,
-                model_type='text',
-                truncate_dim=self.cfg.text_embedder.embedding_dimension,
-            )
-        return self._text_embedder_cpu
 
     def get_algorithm_version(self) -> str:
         """Identifier of the description/embedding scheme, for cache invalidation.
@@ -82,8 +66,10 @@ class MetadataSearch:
         v2.1: every chunk of the description is stored, not just the first — the
         cached value is now a list of vectors rather than one, so the key must
         change for the shape as well as for the coverage.
+        v3.0: descriptions are embedded by the shared multimodal embedder, which
+        puts them in the same vector space as file content.
         """
-        return "meta-search-v2.1"
+        return "meta-search-v3.0"
 
     # ------------------------------------------------------------------
     # Media type helpers
@@ -368,8 +354,9 @@ class MetadataSearch:
         """
         self._fast_cache.set(self.make_embedding_cache_key(file_path), None)
 
-    def process_query(self, query_text: str) -> np.ndarray:
-        return self.text_embedder.embed_query(query_text)
+    def process_query(self, query_text: str):
+        """Embed a search query on the CPU, for matching against descriptions."""
+        return self.query_embedder.embed_query(query_text)
 
     def _generate_embedding(self, file_path: str) -> list[np.ndarray]:
         """Embed a file's assembled description — one vector per chunk.
@@ -386,7 +373,7 @@ class MetadataSearch:
         meta_text = self.generate_full_description(
             file_path, generate_desc_if_not_in_cache=False
         )
-        meta_embeddings = self.text_embedder.embed_text(meta_text)
+        meta_embeddings = self.embedder.embed_long_text(meta_text)
 
         if meta_embeddings is None or len(meta_embeddings) == 0:
             return [self._zero_embedding()]
@@ -395,7 +382,7 @@ class MetadataSearch:
         return [np.asarray(chunk, dtype=np.float32).ravel() for chunk in meta_embeddings]
 
     def _zero_embedding(self) -> np.ndarray:
-        dim = self.text_embedder.embedding_dim
+        dim = self.embedder.embedding_dim
         return np.zeros((dim,), dtype=np.float32) if dim else np.array([], dtype=np.float32)
 
     def _process_single_file_meta(self, file_path: str, generate_embs_if_not_in_cache: bool = True) -> list[np.ndarray]:
@@ -462,15 +449,18 @@ class MetadataSearch:
         similarity scores with NaN for unindexed files — identical contract
         to BaseSearchEngine.compare() and TextSearch.compare().
         """
-        # 1. Normalize the query embedding once on the calling side.
-        if isinstance(query_embedding, torch.Tensor):
-            query_np = query_embedding.detach().to(torch.float32).cpu().numpy().ravel()
-        else:
-            query_np = np.asarray(query_embedding, dtype=np.float32).ravel()
-
         n_files = len(file_embeddings)
         # NaN by default → unindexed files are dropped by FileManager.is_valid_pair().
         scores = np.full(n_files, np.nan, dtype=np.float32)
+
+        # 1. Normalize the query embedding once on the calling side. It may be
+        #    None if the CPU query tower could not encode the input, in which
+        #    case there are simply no results rather than an exception.
+        if isinstance(query_embedding, torch.Tensor):
+            query_embedding = query_embedding.detach().to(torch.float32).cpu().numpy()
+        query_np = _as_query_vector(query_embedding)
+        if query_np is None:
+            return scores
 
         # 2. Collect ALL valid chunks from ALL files into one flat list.
         #    Skip empty file-chunk lists and all-zero chunks (failed embeddings).
@@ -491,7 +481,7 @@ class MetadataSearch:
 
         # 3. ONE subprocess call for the whole batch.
         big_array = np.stack(all_chunks)
-        flat_sims = self.text_embedder.compare(big_array, query_np)
+        flat_sims = cosine_similarity(big_array, query_np)
         flat_sims = np.asarray(flat_sims, dtype=np.float32)
 
         # 4. Smooth-max per file. Indexing by mask is O(N_files × avg_chunks),

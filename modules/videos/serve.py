@@ -16,7 +16,7 @@ import send2trash
 from omegaconf import OmegaConf
 from flask import send_from_directory
 
-from modules.videos.engine import VideoSearch
+from src.content_search import get_content_search
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager
 from src.common_filters import CommonFilters
@@ -32,6 +32,7 @@ import src.virtual_file_system as vfs
 from src.utils import convert_size, time_difference, EmbeddingGatheringCallback
 from src.scheduler import Scheduler
 from src.module_helpers import (
+    make_scheduled_embedding_check,
     register_meta_handlers,
     make_scheduled_rating_check,
 )
@@ -108,14 +109,13 @@ class VideoModuleServer:
     def initialize(self):
         """Main lifecycle hook to boot up the module."""
 
+        # One shared multimodal embedder backs every media type; this engine just
+        # scopes it to 'videos' files.
         self.cse.show_loading_status('Initializing video search engine...')
-        self.videos_search_engine = VideoSearch(cfg=self.cfg)
+        self.videos_search_engine = get_content_search(self.cfg, 'videos')
 
-        self.cse.show_loading_status('Loading video embedding models...')
-        self.videos_search_engine.initiate(
-            models_folder=self.cfg.main.embedding_models_path,
-            cache_folder=self.cfg.main.cache_path,
-        )
+        self.cse.show_loading_status('Loading the embedding model...')
+        self.videos_search_engine.initiate(models_folder=self.cfg.main.embedding_models_path)
 
         self.cse.show_loading_status('Initializing universal evaluator for videos module...')
         self.videos_evaluator = UniversalEvaluator()
@@ -202,6 +202,20 @@ class VideoModuleServer:
         """Registers background schedulers for the module."""
         app = self.app
         cfg = self.cfg
+
+        # Proactively compute content embeddings for files not yet in the cache.
+        # Without this nothing ever writes them, and every content search over
+        # videos would return no results at all.
+        _check_and_submit_embedding = make_scheduled_embedding_check(
+            app, 'Videos', self.file_manager, self.videos_search_engine, cfg, 'videos'
+        )
+        Scheduler(
+            app,
+            interval_minutes=OmegaConf.select(
+                cfg, 'videos.embedding_update_interval_minutes', default=10),
+            fn=_check_and_submit_embedding,
+            name='Videos: compute missing embeddings',
+        )
 
         _check_and_submit_rating = make_scheduled_rating_check(
             app, 'Videos', self.file_manager, self.videos_evaluator, cfg, 'videos',
@@ -362,8 +376,8 @@ class VideoModuleServer:
     def update_model_ratings(self, files_list, ctx=None):
         """Re-compute AI model ratings and persist into FilesLibrary.
 
-        Videos-specific: metadata-only strategy (no embedding proxy, since
-        VideoSearch is a stub).
+        Videos now have real content embeddings, so the description carries a
+        tags + fingerprint proxy section like every other media type.
         """
         print('[VideoModuleServer] update_model_ratings')
 
@@ -394,7 +408,7 @@ class VideoModuleServer:
         _progress[0] = 0.15
         _status(f"Computing metadata embeddings for {len(files_list)} files...")
         all_embeddings = []
-        embedding_dim = self.metadata_search_engine.text_embedder.embedding_dim or 1024
+        embedding_dim = self.metadata_search_engine.embedder.embedding_dim or 1024
         for ind, full_path in enumerate(files_list):
             _check_if_paused()
             _progress[0] = 0.15 + (ind + 1) / len(files_list) * 0.55
@@ -404,7 +418,7 @@ class VideoModuleServer:
                     full_path,
                     generate_desc_if_not_in_cache=False,
                 )
-                chunk_embeddings = self.metadata_search_engine.text_embedder.embed_text(description)
+                chunk_embeddings = self.metadata_search_engine.embedder.embed_text(description)
                 if chunk_embeddings is not None and len(chunk_embeddings) > 0:
                     all_embeddings.append(np.array(chunk_embeddings, dtype=np.float32))
                 else:

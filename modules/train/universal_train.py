@@ -18,7 +18,7 @@ from collections import Counter
 
 from sklearn.model_selection import train_test_split
 from src.universal_evaluator import UniversalEvaluator
-from src.text_embedder import TextEmbedder
+from src.omni_embedder import get_omni_embedder
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ def train_universal_evaluator(cfg, callback=None, max_steps=None, time_budget_se
     print("=" * 60)
 
     # 1. Initialise text embedder (shared across all memory description embeds)
-    text_embedder = TextEmbedder(cfg)
+    text_embedder = get_omni_embedder(cfg)
     text_embedder.initiate(models_folder=cfg.main.embedding_models_path)
 
     # 2. Gather (chunk_embeddings, score) pairs from the durable memory folder.

@@ -33,7 +33,7 @@ Consistent naming is what makes auto-discovery and cross-module compatibility wo
 - Define thin socket event handlers that delegate to engine / file manager
 - Register Flask routes
 
-Heavy logic (embedding, metadata extraction, file processing) belongs in `engine.py` or separate utility files within your module folder.
+Heavy logic belongs elsewhere: embedding in the shared `ContentSearch` engine, internal-metadata reading in `src/metadata/extractors/`, and anything module-specific in a utility file within your module folder.
 
 ### Use `CommonSocketEvents` for all user-facing status
 
@@ -74,7 +74,7 @@ media_directory = cfg.my_module.media_directory  # KeyError if section missing
 
 ### Avoid top-level side effects
 
-Imports in `serve.py` and `engine.py` run when the module is discovered. Don't load models, open files, or start threads at import time — do it inside `init_socket_events()` or `initiate()`.
+Imports in `serve.py` run when the module is discovered. Don't load models, open files, or start threads at import time — do it inside `init_socket_events()` or `initiate()`.
 
 ### Use the app context for database operations in background threads
 
@@ -278,26 +278,21 @@ Use `<style>` blocks inside `page.html` for module-specific styles. Don't create
 
 ## Search engine best practices
 
-### Always use the singleton pattern
+### Ask for the shared engine, don't build one
 
-`BaseSearchEngine` implements `__new__` to enforce a singleton per subclass. Don't fight it — the same engine instance is shared between `serve.py`, `CommonFilters`, and the training pipeline.
+`get_content_search(cfg, media_type)` returns one instance per media type, and the embedding model behind it is a process-wide singleton. Don't construct your own — the same engine is shared between `serve.py`, `CommonFilters` and the background schedulers, and a second copy would mean a second model in VRAM.
 
-### Keep `_process_single_file` deterministic
+### Let internal-metadata readers be fast
 
-Given the same file, always return the same embedding. The caching layer relies on `(file_hash, model_hash)` as cache keys.
+`get_metadata()` is called for every file on every page load. The readers in `src/metadata/extractors/` avoid heavy I/O for this reason — the `stat` reader never opens a file at all, and the audio reader streams only the tag block rather than the whole track. Results are cached on `(path, mtime)`, but the first call still happens on the request thread, so keep it cheap. If your media type needs an expensive reader, do the expensive part in a background pass instead.
 
-### Let `_get_metadata` be fast
+### Never read remote file content in a background pass
 
-Metadata extraction is called frequently (every file on every page load). Avoid heavy I/O or computation. If extraction is expensive, cache the results.
+A media directory can be a WebDAV, SFTP or FTP server. Reading a remote file means downloading it, so background indexing checks `vfs.is_local_url()` and skips anything remote — those files are searchable through their filename, path and `.meta` sidecar instead. If you write a background task that touches file content, do the same.
 
-### Use `_get_model_hash_postfix` for versioning
+### Never use the GPU on the search path
 
-When you change how embeddings are computed (different preprocessing, different pooling), bump the postfix so cached embeddings are invalidated:
-
-```python
-def _get_model_hash_postfix(self):
-    return "_v1.1.0"  # Bump this when embedding logic changes
-```
+Searching is expected to stay responsive no matter what the background tasks are doing. Queries are embedded on the CPU by `QueryEmbedder`; the GPU belongs to background tasks the user can see and pause. If you call `process_files()` from a search handler, pass `generate_embs_if_not_in_cache=False`.
 
 ---
 
@@ -310,8 +305,8 @@ def _get_model_hash_postfix(self):
 | Database tables not created | Ensure `db_models.py` imports `db` from `src.db_models`, not a new `SQLAlchemy()` instance |
 | Module crashes on startup | Check the Docker/app logs; `init_socket_events` runs in a background thread, errors may be swallowed |
 | Files 404 in the browser | Verify the Flask route path matches what the frontend requests (e.g. `/my_module_files/...`) |
-| Stale embeddings after model change | Bump `_get_model_hash_postfix()` to invalidate caches |
-| `model_name` returns `None` but you expected it | Check that your config section name in `config.yaml` exactly matches what `engine.py` reads |
+| Stale embeddings after a model change | Bump `CONTENT_ALGORITHM_VERSION` in `src/content_search.py`; the model hash is already part of the cache key, so a genuine model swap invalidates on its own |
+| Your files are never indexed | Check that the extensions are listed under a media type in `media_types/media_types.yaml`, and that your module declares that type in `media_types:` |
 | `config.defaults.yaml` not being merged | Verify the file is at `modules/my_module/config.defaults.yaml` (not nested deeper) and the top-level YAML key matches the module folder name |
 | Scheduled tasks not running | Check that the interval in config is a positive number, not `null`. Verify `schedule_task()` is called after `init_socket_events` finishes setup |
 | Task Manager not available | Access via `app.task_manager`, not by importing directly. It's set on the Flask app object in `app.py` |

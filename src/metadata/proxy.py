@@ -127,12 +127,12 @@ class EmbeddingProxyGenerator:
             name="embedding_proxy",
         )
 
-        # Tag-embedding matrix saved as a .pt file once per vocab hash
+        # Tag-embedding matrix saved as a .pt file, once per vocabulary *and*
+        # model — see _tag_embs_path_for.
         os.makedirs(cache_path, exist_ok=True)
-        self._tag_embs_path = os.path.join(
-            cache_path, f'tag_embeddings_{self._vocab_hash}.pt'
-        )
+        self._cache_path = cache_path
         self._tag_embs: Optional[np.ndarray] = None  # lazy-loaded
+        self._tag_embs_hash: Optional[str] = None    # model it was built with
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -183,28 +183,53 @@ class EmbeddingProxyGenerator:
         thresh = 'none' if self.threshold is None else f'{self.threshold:.4f}'
         return f"proxy::{_ALGO_HASH}::{self._vocab_hash}::{thresh}::{embedding_key}"
 
+    def _tag_embs_path_for(self, model_hash: str) -> str:
+        """Where the tag matrix for *model_hash* lives.
+
+        Tag vectors are compared against file embeddings, so they only mean
+        anything in the same vector space — the model is part of their identity,
+        not just the vocabulary. Keyed on the vocabulary alone, swapping the
+        embedding model would silently reuse the old model's tag vectors and
+        every tag would be noise.
+        """
+        return os.path.join(
+            self._cache_path,
+            f'tag_embeddings_{self._vocab_hash}_{model_hash[:12]}.pt',
+        )
+
     def _get_tag_embeddings(self) -> np.ndarray:
         """Return [N_tags, D] L2-normalised float32 array.
 
         Loaded from disk on first call; computed via the source's text encoder
         and saved to disk if the cache file is missing. This is the only path
         that loads an embedding model.
+
+        Row *i* always corresponds to ``self.tags[i]`` — callers map similarity
+        scores back to tag names by index.
         """
-        if self._tag_embs is not None:
+        model_hash = self.source.model_hash
+        if not model_hash:
+            # Nothing has loaded a model yet, so there is no space to embed
+            # into. Don't cache this; a later pass will succeed.
+            return np.zeros((0, 1), dtype=np.float32)
+
+        if self._tag_embs is not None and self._tag_embs_hash == model_hash:
             return self._tag_embs
 
-        if os.path.exists(self._tag_embs_path):
+        tag_embs_path = self._tag_embs_path_for(model_hash)
+        if os.path.exists(tag_embs_path):
             try:
-                data = torch.load(self._tag_embs_path, map_location='cpu', weights_only=True)
+                data = torch.load(tag_embs_path, map_location='cpu', weights_only=True)
                 arr  = (
                     data.numpy().astype(np.float32)
                     if isinstance(data, torch.Tensor)
                     else np.array(data, dtype=np.float32)
                 )
                 self._tag_embs = arr
+                self._tag_embs_hash = model_hash
                 print(
                     f"[EmbeddingProxy] Loaded {arr.shape[0]} tag embeddings "
-                    f"for '{self.source.name}' from {self._tag_embs_path}"
+                    f"for '{self.source.name}' from {tag_embs_path}"
                 )
                 return self._tag_embs
             except Exception as e:
@@ -212,6 +237,7 @@ class EmbeddingProxyGenerator:
 
         if not self.tags:
             self._tag_embs = np.zeros((0, 1), dtype=np.float32)
+            self._tag_embs_hash = model_hash
             return self._tag_embs
 
         print(
@@ -231,16 +257,26 @@ class EmbeddingProxyGenerator:
         valid = [r for r in rows if r is not None]
         if not valid:
             self._tag_embs = np.zeros((0, 1), dtype=np.float32)
+            self._tag_embs_hash = model_hash
             return self._tag_embs
 
-        arr = np.stack(valid, axis=0)  # [N, D]
-        # L2-normalise (SigLIP text embeddings are already normalised; CLAP's are not)
+        # Substitute a zero row for a tag that failed to encode rather than
+        # dropping it: callers read tag names back as self.tags[row], so a
+        # missing row would shift the name of every tag after it. A zero row
+        # scores 0 against everything, so it simply never wins.
+        dim = valid[0].shape[0]
+        arr = np.stack(
+            [r if r is not None else np.zeros(dim, dtype=np.float32) for r in rows],
+            axis=0,
+        )  # [N_tags, D]
+        # L2-normalise; the model does not guarantee unit-length outputs.
         norms = np.linalg.norm(arr, axis=1, keepdims=True)
         arr   = arr / np.where(norms > 0, norms, 1.0)
 
-        torch.save(torch.from_numpy(arr), self._tag_embs_path)
+        torch.save(torch.from_numpy(arr), tag_embs_path)
         self._tag_embs = arr
-        print(f"[EmbeddingProxy] Saved tag embeddings to {self._tag_embs_path}")
+        self._tag_embs_hash = model_hash
+        print(f"[EmbeddingProxy] Saved tag embeddings to {tag_embs_path}")
         return self._tag_embs
 
     def _build_section(self, emb: np.ndarray) -> str:

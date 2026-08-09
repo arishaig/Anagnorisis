@@ -91,15 +91,15 @@ Only needed if the module persists per-file data. The framework handles its abse
 
 Tables are auto-created and auto-migrated via Flask-Migrate.
 
-### `engine.py` — Search / embedding engine
+### Content search — shared, not per-module
 
-Subclass of `src.base_search_engine.BaseSearchEngine`. The base class provides:
+Modules no longer ship an `engine.py`. One multimodal model embeds every kind of content, and `src.content_search.ContentSearch` serves all of them; `get_content_search(cfg, media_type)` hands you an instance scoped to your media type. It provides:
 
-- **Model downloading** from HuggingFace Hub → local `models/` directory
-- **Two-level caching** (in-memory LRU + on-disk pickle) keyed by `(file_hash, model_hash)`
-- **File hashing** with configurable algorithm (default MD5, overridable — e.g. videos use `xxh3` sampled hashing)
+- **Model downloading** from HuggingFace Hub → local `models/` directory, on first use
+- **Two-level caching** (in-memory + on-disk) in one shared `content` namespace, keyed by `(path, model_hash, version)`
+- **File hashing** chosen per media type (MD5 by default; video is fingerprinted by sampling, so an 8 GB film is identified without reading 8 GB)
 - **Batch processing** with progress callbacks
-- **Singleton pattern** — one instance per subclass, shared across the app
+- **One instance per media type**, sharing a single process-wide embedder
 
 ### `page.html` — Frontend template
 
@@ -145,7 +145,7 @@ Modules can include any extra `.py` files (e.g. `crawler.py` in the WebSearch mo
 | Module | Purpose |
 |--------|---------|
 | `src.socket_events.CommonSocketEvents` | Throttled status/progress broadcasting. Two methods: `show_loading_status()` (init phase) and `show_search_status()` (runtime). |
-| `src.base_search_engine.BaseSearchEngine` | Abstract base for all embedding engines. Provides model management, caching, and batch processing. |
+| `src.content_search.get_content_search` | Returns the shared content-search engine, scoped to a media type. Embeds and compares file *content*. Replaces the per-module engines. |
 | `src.file_manager.FileManager` | Discovers files in `media_directory`, computes hashes, handles pagination, and coordinates with the search engine for embedding extraction. Also provides `get_unrated_files(evaluator_hash)` and `list_all_files()`. |
 | `src.common_filters.CommonFilters` | Pluggable sorting/filtering system. Built-in filters: `by_text`, `by_file`, `file_size`, `similarity`, `random`, `rating`. Modules can add custom filters (e.g. `recommendation`, `length`). |
 | `src.metadata.search.get_metadata_search` | Returns the process-wide `MetadataSearch`. Builds text descriptions from file metadata (name, path, EXIF/tags, OmniDescriptor captions, `.meta` sidecars) and embeds them for semantic search. Module-independent: it resolves a file's media type from its extension, so it needs nothing from your module. |
@@ -153,7 +153,8 @@ Modules can include any extra `.py` files (e.g. `crawler.py` in the WebSearch mo
 | `src.scoring_models.Evaluator` | Base neural network for scoring. The universal evaluator (`TransformerEvaluator`) is the preferred variant for cross-module rating. |
 | `src.model_manager.ModelManager` | Wraps ML models for GPU memory-efficient inference with automatic device management and idle timeout. |
 | `src.db_models.db` | The shared SQLAlchemy instance. All modules must import `db` from here. |
-| `src.text_embedder.TextEmbedder` | Converts text strings to embedding vectors using the configured text model. Runs in a subprocess to isolate CUDA context. |
+| `src.omni_embedder.get_omni_embedder` | The single embedding model — text, images, audio and video into one shared vector space. Runs in a subprocess to keep the CUDA context out of the Flask process, and unloads when idle. Used by background tasks. |
+| `src.omni_embedder.get_query_embedder` | The same model on the CPU, in-process, for embedding search queries. Searching must never touch the GPU. |
 | `src.omni_descriptor.OmniDescriptor` | Multi-modal captioning model that generates text descriptions from images, audio, video, or text files. |
 | `src.task_manager.TaskManager` | Centralised background task queue accessible via `app.task_manager`. Tasks run sequentially with cooperative pause/resume/cancel via `TaskContext`. Progress is broadcast to the frontend `TaskManagerComponent`. |
 | `src.scheduler.schedule_task` | Utility to run a function periodically on a daemon thread with `app.app_context()`. Used by all media modules for background rating and description generation. |
@@ -270,7 +271,7 @@ Anagnorisis uses a **single universal evaluator** instead of per-module scoring 
                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Text embedding                                │
-│  TextEmbedder.embed_text(description)                            │
+│  embedder.embed_text(description)                                │
 │  → chunk into tokens → embed each chunk → list of vectors        │
 └────────────────────────────┬─────────────────────────────────────┘
                              │
@@ -308,7 +309,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     Yields (chunk_embeddings: np.ndarray[chunks, dim], user_rating: float)
     
     - cfg: merged OmegaConf config
-    - text_embedder: shared TextEmbedder with embed_text(text) → np.ndarray
+    - text_embedder: the shared embedder; embed_text(text) → np.ndarray[chunks, dim]
     - status_callback: optional callable(str) for progress reporting
     """
 ```
@@ -343,7 +344,7 @@ Location: Maui, Hawaii
 Tags: vacation, sunset, beach, landscape
 ```
 
-This text is then embedded by `TextEmbedder` and used as the training input. The key insight is that **all media types are unified into text** before training, which is why a single evaluator works across images, audio, video, and documents.
+This text is then embedded by the shared embedder and used as the training input. The key insight is that **all media types are unified into text** before training, which is why a single evaluator works across images, audio, video, and documents.
 
 ---
 

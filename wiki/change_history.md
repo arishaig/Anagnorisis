@@ -1,6 +1,16 @@
 # Change History
 
 
+### Version 0.4.8 (10.08.2026)
+*  **One model:**
+    *   CLAP, SigLIP and Qwen3-Embedding are gone. A single model `jina-embeddings-v5-omni-small` now embeds text, images, audio and video into one shared space, so a typed query can rank a photo, a song and a description against each other in the same list. 
+    *   Videos module have a `semantic-content-based` search now.
+    *   A whole document now becomes one embedding rather than being cut into pieces and averaged; only text longer than the model's very large context window is split at all.
+*  **Search stays off the GPU:**
+    *   Queries are embedded on the processor, not the graphics card. The GPU is reserved for background tasks, which are the ones you can watch and pause on the Task Manager page.
+*  **Caching:**
+    *   Tag lists are stored per model, so switching the embedding model no longer reuses the previous one's tags. Changing search quality or the embedding size correctly invoke a refresh of the tags' embeddings.
+
 ### Version 0.4.7 (06.08.2026)
 *  **Media types:**
     *   File extensions and tag vocabularies moved out of `config.yaml` into a new `media_types/` folder, one entry per kind of content: audio, images, videos, text and documents. `config.yaml` shrank from 267 lines to about 70.

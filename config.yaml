@@ -24,23 +24,37 @@ videos:
   media_types: [videos]
   rating_update_interval_minutes: 10 # How often to proactively rate unrated files in the background (set to null to disable)
   rating_update_batch_size: 3000 # Max number of files rated per background run (set to null for no limit)
+  embedding_update_batch_size: 200 # Videos are the slowest to embed — keep the batch small
+  embedding_update_interval_minutes: 10
 text:
   media_directory: osfs:///mnt/media/text/
   media_types: [text]
   rating_update_interval_minutes: 10 # How often to proactively rate unrated files in the background (set to null to disable)
   rating_update_batch_size: 1500 # Max number of files rated per background run (set to null for no limit)
-audio_embedder: # Used for audio embedding in the music module.
-  model_name: "laion/clap-htsat-fused"
-  device: cuda # Device for audio embedding (cpu/cuda).
-image_embedder: # Used for image embedding in the images module.
-  model_name: "google/siglip-base-patch16-224"
-  device: cuda # Device for image embedding (cpu/cuda).
-text_embedder: # Used for embedding text in the meta-database search, the universal evaluator, and any other text-related processes.
-  model_name: "Qwen/Qwen3-Embedding-0.6B"
-  device: cuda # Device for text embedding (cpu/cuda).
-  chunk_size: 384 # Max tokens per chunk
-  chunk_overlap: 128 # Overlap between chunks
-  embedding_dimension: 1024 # Dimension to truncate to (Optional, match Matryoshka)
+  embedding_update_batch_size: 1000
+  embedding_update_interval_minutes: 10
+embedder: # The single model that embeds everything — text, images, audio and video.
+  # One multimodal model means one vector space: a text query can rank a photo,
+  # a song and a .meta description against each other in the same list.
+  model_name: "jinaai/jina-embeddings-v5-omni-small"
+  task: retrieval # retrieval | classification | clustering | text-matching
+  embedding_dimension: 1024 # Matryoshka truncation: 32/64/128/256/512/768/1024
+  chunk_size: null # Max tokens per chunk; null = the model's full context window,
+                   # so a whole document becomes ONE contextual vector and only
+                   # text that exceeds the window is split at all.
+  chunk_overlap: 512 # Token overlap between chunks, when splitting is needed
+  batch_size: 8 # Files embedded per forward pass
+  # Searching never touches the GPU: queries are embedded on the CPU, in-process.
+  # "omni" loads every tower so you can search WITH a file — drop in an image,
+  # clip or track and find things like it. "text" loads only the text tower
+  # (a third of the weights) if RAM is tight; text queries still work, searching
+  # by a media file does not.
+  query_modality: omni
+  # Video is sampled to frames before encoding — handing the model a path makes
+  # it decode the entire file into memory first, which OOMs on small clips.
+  video_frames: 16 # Evenly spaced frames per video (the model accepts up to 32)
+  video_frame_max_size: 512 # Longest side of each sampled frame, in pixels
+  idle_timeout_seconds: 120 # Unload the model after this long without use, to free VRAM
 omni:
   model_name: "dystrio/MiniCPM-o-4_5-Sculpt-Throughput"
   device: cuda # Device for omni descriptor (cpu/cuda).

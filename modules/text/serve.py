@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from modules.text.engine import TextSearch
+from src.content_search import get_content_search
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager 
 from src.common_filters import CommonFilters
@@ -9,6 +9,7 @@ from src.metadata.search import get_metadata_search
 import modules.text.db_models as db_models
 from src.universal_evaluator import UniversalEvaluator
 
+from src.module_helpers import make_scheduled_embedding_check
 from src.scheduler import Scheduler
 from omegaconf import OmegaConf
 import src.db_models as main_db_models
@@ -60,11 +61,13 @@ class TextModuleServer:
     def initialize(self):
         """Main lifecycle hook to boot up the module."""
 
+        # One shared multimodal embedder backs every media type; this engine just
+        # scopes it to 'text' files.
         self.cse.show_loading_status('Initializing text search engine...')
-        self.text_search_engine = TextSearch(cfg=self.cfg)
+        self.text_search_engine = get_content_search(self.cfg, 'text')
 
-        self.cse.show_loading_status('Loading embedding models...')
-        self.text_search_engine.initiate(models_folder=self.cfg.main.embedding_models_path, cache_folder=self.cfg.main.cache_path)
+        self.cse.show_loading_status('Loading the embedding model...')
+        self.text_search_engine.initiate(models_folder=self.cfg.main.embedding_models_path)
 
         self.cse.show_loading_status('Initializing universal evaluator for text module...')
         self.text_evaluator = UniversalEvaluator()
@@ -122,6 +125,20 @@ class TextModuleServer:
        
         app = self.app
         cfg = self.cfg
+
+        # Proactively compute content embeddings for files not yet in the cache.
+        # Without this nothing ever writes them, and every content search over
+        # text would return no results at all.
+        _check_and_submit_embedding = make_scheduled_embedding_check(
+            app, 'Text', self.file_manager, self.text_search_engine, cfg, 'text'
+        )
+        Scheduler(
+            app,
+            interval_minutes=OmegaConf.select(
+                cfg, 'text.embedding_update_interval_minutes', default=10),
+            fn=_check_and_submit_embedding,
+            name='Text: compute missing embeddings',
+        )
 
         rating_update_interval = OmegaConf.select(cfg, 'text.rating_update_interval_minutes', default=None)
 
@@ -262,7 +279,7 @@ class TextModuleServer:
                 )
                 self.metadata_search_engine.omni_descriptor.unload()
                 if description and len(description.strip()) >= 10:
-                    chunk_embs = self.metadata_search_engine.text_embedder.embed_text(description)
+                    chunk_embs = self.metadata_search_engine.embedder.embed_text(description)
                     embeddings.append(chunk_embs if chunk_embs is not None else [])
                 else:
                     embeddings.append([])

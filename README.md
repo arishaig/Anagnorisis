@@ -136,7 +136,7 @@ ERROR: for {your container name} Cannot start service anagnorisis: error while c
 You have to create the folder specified as your project config mount target (the path before `:/mnt/project_config` in your `docker-compose.override.yaml`) manually on your host machine. Docker sometimes cannot create such folders by itself due to permission issues.
 
 ## Additional notes for installation
-The Docker image (Python dependencies, PyTorch with CUDA runtime, system libraries) takes approximately 8 GB of disk space after building. On first startup the application downloads the required ML models that would take roughly 23 GB from the disk. If you use the project heavily with active use of external modules, their caches can grow to several additional gigabytes. As a rough total estimate, budget around 40 GB of free disk space before starting.
+The Docker image (Python dependencies, PyTorch with CUDA runtime, system libraries) takes approximately 8 GB of disk space after building. On first startup the application downloads the required ML models that would take roughly 20 GB, most of it the descriptor model. If you use the project heavily with active use of external modules, their caches can grow to several additional gigabytes. As a rough total estimate, budget around 40 GB of free disk space before starting.
 
 For best user experience I would recommend running the project with relatively modern Nvidia GPU with at least 8Gb of VRAM and 32Gb of RAM. At least this is the configuration I am using myself. However, the project should be able to run on lower configurations, but performance might be poor especially without CUDA-friendly GPU. Note that CPU-only mode might be significantly slower.
 
@@ -179,30 +179,36 @@ docker compose up -d --build
 
 See [`modules/_module_template/`](modules/_module_template/) for a fully documented reference implementation.
 
+
 ## Security notes
 The project is meant to be run on the localhost only for now. The default configuration ip address is set to `127.0.0.1` inside `docker-compose.override.yaml` file. This means that the application will only be accessible from the machine it is running on. If you want to access it from other devices on your local network, you can change the port binding in your `docker-compose.override.yaml` to `0.0.0.0:5001:5001`. You can even tunnel it to the internet using services like [ngrok](https://ngrok.com/) or [cloudflare tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/). However, I would strongly recommend against exposing the service to the internet (unless you are 100% know what you are doing) as there is no proper security work has been done yet. 
 
-## Embedding models
-To make audio, visual, video and text search possible the project uses these models:  
-[LAION-AI/CLAP](https://github.com/LAION-AI/CLAP) - for audio embeddings.  
-[Google/SigLIP](https://arxiv.org/pdf/2303.15343) - for image embeddings.  
-[Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) - for text embeddings.  
-[Dystrio/MiniCPM-o-4_5-Sculpt-Throughput](https://huggingface.co/dystrio/MiniCPM-o-4_5-Sculpt-Throughput) - as omni-descriptor model to convert all data modalities into text descriptions. Optimized version of [MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5) (used by `metadata-based-search`).  
+## How search works
+
+There are three search modes, that are used for different kind of search:
+
+- **Filename-based search** is a typical fuzzy-matching search that compares your query with file names, both local and remote.
+- **Content-based search** embeds the *file itself* with the embedding model and compares embedding of your query with the embeddings of files to find the best matches. Only local files are supported for that kind of search to avoid unsolicited downloads from the remote servers. 
+- **Metadata-based search** embeds a *text description* of the file: its name and path, an automatic description from the descriptor model (only local), zero-shot tags (only local), internal metadata (EXIF, ID3 tags, etc.) (also only local), and the contents of its `{filename}.meta` sidecar (local and remote in case such file exists).
+
+Two rules the project holds to:
+
+- **Searching never uses the GPU.** Your query is embedded on the CPU, in-process. The GPU is used only by background tasks you can see and pause on the Task Manager page.
+- **Remote files are never downloaded automatically.** Background indexing reads only local files.
+
+Because searching reads from the index rather than building it, files that have not been indexed yet simply do not appear in results. The status bar reports how many are still pending.
+
+## Models
+The project runs two models:
+
+[jinaai/jina-embeddings-v5-omni-small](https://huggingface.co/jinaai/jina-embeddings-v5-omni-small) — **the embedding model**. One model for every kind of content: text, images, audio and video all land in a single shared vector space. This replaced the three separate models the project used before (CLAP for audio, SigLIP for images, Qwen3 for text), each of which had its own incompatible space.
+
+[Dystrio/MiniCPM-o-4_5-Sculpt-Throughput](https://huggingface.co/dystrio/MiniCPM-o-4_5-Sculpt-Throughput) — **the descriptor model**, which writes a natural-language description of a file. An optimized version of [MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5).
 
 All models are downloaded automatically when the project is started for the first time. This might take some time depending on the internet connection. You can see the progress inside `logs/anagnorisis-app_log.txt` file that will appear in the project's root folder if you run the project from the Docker container.
 
 **Huge thanks to [Dystrio](https://huggingface.co/dystrio) for optimizing the MiniCPM-o-4_5 model specifically for the Anagnorisis project, making it more then 2 times faster at token generation speed and providing even bigger context window with minimal loss in model's accuracy.**
 
----
-
-> [!NOTE] 
-> Since verion 0.3.4 the approach to embedding generation is going to be changing dramatically. Instead of using several pretrained CLIP-like embedding models as before there are going to be only one unified omni model to convert all the data modalities into the text descriptions and then the search and recommendations will be done on the text level using text embeddings. While this approach is more demanding to the hardware, much slower and probably less accurate at the start, it allows to create a more unified and consistent search experience across all data modalities. I also believe that this approch is much more scalable with new releases of more powerful and efficient omni models. For now [MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5) is used, that with 4-bit quantization could work under 8Gb of VRAM with small but reasonable context window (unfortunately no other models, including [Gemini-3n-e2B](https://huggingface.co/google/gemma-3n-E2B) have worked for me). This approach also allows to unify semantic-based search and metadata-based search, as everything is converted into text descriptions. Even better approach would be using a [Universal-Embedding Model](https://volotat.github.io/p/there-is-a-way-to-make-training-llms-way-cheaper-and-more-accessible/) but as for my knowledge no such models yet exist.
->
-> For now the old search through CLIP-like models is still available as an option in `Images` and `Music` modules, but everything in the project would be shifting towards new approach and the old semantic search will be removed in the future releases when the omni-descriptor approach is fully stable and efficient enough. 
-> 
-> In the future, when omni-models will be small enough and/or typical personal hardware will be powerful enough, users will be able to fine-tune the omni-descriptor model itself on their '.meta' custom made descriptions with [LORA](https://arxiv.org/abs/2106.09685)/[DORA](https://arxiv.org/abs/2402.09353)/[ELLA](https://arxiv.org/abs/2601.02232)-like approaches so automatic descriptions would be done in the user-like fashion, making the search experience even more personalized and accurate.
-> 
-> We will also no longer be needed to train separate recommendation models for each data modality, as everything is derived from text and eventually mapped onto a unified embedding space, the single `TransformerEvaluator` model would be responsible for grading all types of data, finally achieving one of the main goals of the project - creating a single unified model of user preferences, i.e. some form of digital twin of the user that can be used to search and filter information on the user's behalf.
 
 ## Wiki
 The project has its own wiki that is integrated into the project itself, you might access it by running the project, or simply reading it as markdown files.

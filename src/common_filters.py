@@ -83,28 +83,28 @@ class CommonFilters:
         self._fast_cache = TwoLevelCache(cache_dir=None) # Short lived RAM-only cache
 
     def filter_by_file(self, all_files, text_query):
+        """Rank files by similarity to one target file."""
         target_path = text_query
         self.common_socket_events.show_search_status("Extracting embeddings")
-        embeds_files = self.engine.process_files(all_files, callback=self.embedding_gathering_callback, media_folder=self.media_directory, generate_embs_if_not_in_cache=False)
-        target_emb = self.engine.process_files([target_path], callback=self.embedding_gathering_callback, media_folder=self.media_directory)
+        embeds_files = self.engine.process_files(
+            all_files, callback=self.embedding_gathering_callback,
+            media_folder=self.media_directory, generate_embs_if_not_in_cache=False,
+        )
+        # The target is embedded on demand if it is not already indexed — one
+        # file, asked for by the user, always on the CPU. That is what lets you
+        # drop in any image, clip or track and find things like it.
+        target = self.engine.embed_query_file(target_path)
+        if target is None:
+            self.common_socket_events.show_search_status(
+                "Could not read that file to search with it."
+            )
+            return np.full(len(all_files), np.nan, dtype=np.float32)
 
         self.common_socket_events.show_search_status("Computing distances between embeddings")
-        dists = torch.cdist(embeds_files, target_emb, p=2).squeeze(-1)
-        scores = (1.0 / (1.0 + dists)).cpu().detach().numpy()
-
-        # All-zero embeddings mark unindexed local files → NaN them so
-        # FileManager.is_valid_pair() filters them out of the result list.
-        if isinstance(embeds_files, torch.Tensor): # images or music, single embedding vector
-            scores[np.all(embeds_files.cpu().numpy() < 1e-5, axis=1)] = np.nan
-        else: # text, list of vecrtor chunks
-            for i, file_chunks in enumerate(embeds_files):
-                if not file_chunks:
-                    scores[i] = np.nan
-                    continue
-                if all(np.all(np.abs(chunk) < 1e-5) for chunk in file_chunks):
-                    scores[i] = np.nan
-
-        return scores
+        # Embeddings are L2-normalised, so ranking by cosine is the same ordering
+        # as ranking by euclidean distance — and it reuses the engine's scorer,
+        # which already returns NaN for files that have not been embedded.
+        return self.engine.compare(embeds_files, target)
 
     def filter_by_text(self, all_files, text_query, **kwargs):
         
@@ -190,7 +190,7 @@ class CommonFilters:
             local_files = [all_files[i] for i in local_indices]
             
             self.common_socket_events.show_search_status("Extracting embeddings")
-            embeds_text = self.engine.query_embedder.embed_text(text_query)
+            embeds_text = self.engine.process_text(text_query)
             embeds_files = self.engine.process_files(
                 local_files, 
                 callback=self.embedding_gathering_callback,
@@ -208,7 +208,7 @@ class CommonFilters:
 
         if mode == 'semantic-metadata':
             self.common_socket_events.show_search_status("Extracting metadata embeddings")
-            embeds_meta_text = self.metadata_engine.text_embedder_cpu.embed_text(text_query)
+            embeds_meta_text = self.metadata_engine.process_query(text_query)
             embeds_meta_files = self.metadata_engine.process_files(all_files, callback=self.meta_embedding_gathering_callback, generate_embs_if_not_in_cache=False)
             # embeds_meta_text = embeds_meta_text[None,...] # Wierd hack fix later
             meta_similarity_scores = self.metadata_engine.compare(embeds_meta_files, embeds_meta_text)
@@ -286,9 +286,22 @@ class CommonFilters:
 
     def filter_by_similarity(self, all_files, text_query):
         self.common_socket_events.show_search_status("Extracting embeddings for similarity sort")
-        embeds = self.engine.process_files(all_files, callback=self.embedding_gathering_callback, media_folder=self.media_directory)
-        if isinstance(embeds, torch.Tensor):
-            embeds = embeds.cpu().detach().numpy()
+        # Cache-only: sorting a folder must never trigger GPU work.
+        chunked = self.engine.process_files(
+            all_files, callback=self.embedding_gathering_callback,
+            media_folder=self.media_directory, generate_embs_if_not_in_cache=False,
+        )
+        dim = self.engine.embedding_dim or 1024
+        # One vector per file — its first chunk stands for the file here.
+        # Unindexed files get a placeholder so the matrix stays rectangular, and
+        # are scored NaN at the end so FileManager drops them. They must not be
+        # left as zero vectors: zeros are mutually distance-0 and would sort to
+        # the *front* of a "least similar first" ordering.
+        indexed = [bool(c) for c in chunked]
+        embeds = np.stack([
+            np.asarray(c[0], dtype=np.float32).ravel() if c else np.zeros(dim, dtype=np.float32)
+            for c in chunked
+        ]) if chunked else np.zeros((0, dim), dtype=np.float32)
 
         self.common_socket_events.show_search_status("Computing distances between embeddings")
         distances = compute_distances_batched(embeds)
@@ -327,5 +340,8 @@ class CommonFilters:
         }
         scores = np.array([path_to_score[f] for f in all_files], dtype=np.float32)
 
-        
+        # Files with no cached embedding took no part in the distance ranking —
+        # drop them rather than let their placeholder row win a position.
+        scores[~np.asarray(indexed, dtype=bool)] = np.nan
+
         return scores

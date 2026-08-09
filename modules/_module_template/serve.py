@@ -6,7 +6,7 @@ discovers it automatically and calls `init_socket_events(...)` during startup.
 
 Responsibilities:
   1. Create a CommonSocketEvents instance for progress/status reporting.
-  2. Instantiate and initialise the search engine (engine.py).
+  2. Scope the shared content-search engine to this module's media type.
   3. Load the universal evaluator for AI-based scoring.
   4. Set up FileManager for browsing / hashing / paginating files.
   5. Set up metadata search and CommonFilters.
@@ -30,7 +30,7 @@ from omegaconf import OmegaConf
 import src.file_manager as file_manager
 
 # Import your module's own submodules
-from modules._module_template.engine import ExampleSearch
+from src.content_search import get_content_search
 import modules._module_template.db_models as db_models
 
 # Shared framework utilities
@@ -88,8 +88,11 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
         print("Example module: media folder is not set.")
 
     # --- 3. Initialise search engine -------------------------------------
+    # There is no per-module engine any more. One shared multimodal embedder
+    # backs every media type; get_content_search scopes it to the media type
+    # this module declares in config.defaults.yaml.
     common_socket_events.show_loading_status('Initializing search engine...')
-    search_engine = ExampleSearch(cfg=cfg)
+    search_engine = get_content_search(cfg, 'images')
     search_engine.initiate(
         models_folder=cfg.main.embedding_models_path,
         cache_folder=cfg.main.cache_path,
@@ -158,7 +161,7 @@ def init_socket_events(socketio, app=None, cfg=None, data_folder='./project_data
                     if not description:
                         continue
 
-                    embedding = metadata_search_engine.text_embedder.embed_text(description)
+                    embedding = metadata_search_engine.embedder.embed_text(description)
                     if embedding is None or len(embedding) == 0:
                         continue
 

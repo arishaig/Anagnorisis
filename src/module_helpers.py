@@ -7,7 +7,7 @@ can be passed to ``Scheduler``.
 
 import os
 from omegaconf import OmegaConf
-
+import random
 
 # ---------------------------------------------------------------------------
 # .meta file handlers + full description handler
@@ -73,8 +73,8 @@ def make_scheduled_embedding_check(app, label, file_manager: FileManager, engine
     embeddings and submits an embedding task to ``app.task_manager``.
 
     The walker is hard-coded to ``osfs:///mnt/media/`` — i.e. LOCAL files only.
-    Embedding models (CLAP/SigLIP) need to read the audio/image content to
-    produce embeddings, so we cannot include remote files here. Remote files
+    A content embedding is made from the file's own bytes, so including a
+    remote file here would mean downloading it. Remote files
     only get an embedding if the user explicitly opens them in a context
     that triggers MemorySystem (direct user action), or if they are
     accessed through the search hot path which embeds the query on CPU.
@@ -104,10 +104,12 @@ def make_scheduled_embedding_check(app, label, file_manager: FileManager, engine
 
         total = len(unindexed)
 
-        # --- NEW: cap the per-cycle batch so we never monopolise the queue ---
+        # --- cap the per-cycle batch so we never monopolise the queue ---
         batch_cfg = OmegaConf.select(cfg, f'{cfg_key}.embedding_update_batch_size', default=None)
         batch_size = min(batch_cfg, total) if batch_cfg else total
-        batch = unindexed[:batch_size]
+
+        # Sample files randomly to ensure that all folders gets roughly equal indexing distribution
+        batch = random.sample(unindexed, batch_size)
         # -------------------------------------------------------------------------
 
         base_name = f'{label}: compute missing embeddings'

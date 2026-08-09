@@ -2,59 +2,32 @@
 
 Media types are content kinds (see ``media_types.py``); nothing in the taxonomy
 or in ``media_types/*.yaml`` names a model. The mapping from a content kind to
-the model that handles it lives here and nowhere else, so replacing CLAP and
-SigLIP with a single omni embedding model is an edit to the two tables below —
-no group renames, no config migration, no cache-directory churn.
+the model that handles it lives here and nowhere else.
 
-The tables are also the single definition of each type's *embedding identity*
-(cache directory and version suffix). The module search engines read their
-``cache_prefix`` / ``_get_model_hash_postfix`` from here rather than declaring
-their own, because a divergence between the two would not raise — it would just
-silently stop the proxy from finding embeddings.
+There is now a single multimodal embedder behind every type, so the only
+per-type question left is whether a type *has* content to embed at all — a PDF
+has no content embedding yet, so it gets no proxy section. When that changes,
+add the type to CONTENT_EMBEDDABLE and its tag vocabulary starts being used.
 """
 
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import torch
 
-from src.audio_embedder import AudioEmbedder
-from src.base_search_engine import embedding_cache_key
 from src.caching import get_two_level_cache
-from src.image_embedder import ImageEmbedder
+from src.content_search import CACHE_PREFIX, CONTENT_ALGORITHM_VERSION, embedding_cache_key
 from src.metadata.media_types import MediaType
 from src.metadata.proxy import EmbeddingProxyGenerator
+from src.omni_embedder import get_omni_embedder, get_query_embedder
 
 
-@dataclass(frozen=True)
-class EmbeddingModel:
-    """How one media type turns file content into a vector.
-
-    embedder_cls  A singleton embedder in src/ — constructing it is free, and
-                  only ``initiate()`` loads anything.
-    cache_prefix  Sub-directory of the cache holding this type's embeddings.
-    version       Cache-key suffix; bump by hand to invalidate this type's
-                  embeddings after an incompatible change.
-    """
-
-    embedder_cls: type
-    cache_prefix: str
-    version: str = ''
-
-
-# Types absent from this table have no content embedding, and therefore no
-# embedding proxy — they are described by filename, path and metadata alone.
-_EMBEDDING_MODELS: dict[str, EmbeddingModel] = {
-    # cache_prefix is 'music' rather than 'audio' only because that is where
-    # existing installations already have their CLAP embeddings; renaming it
-    # would silently orphan them and force a full re-embed.
-    'audio': EmbeddingModel(AudioEmbedder, cache_prefix='music', version='v1.2'),
-    'images': EmbeddingModel(ImageEmbedder, cache_prefix='images', version='_v1.0.1'),
-}
+# Media types whose files can be embedded from their content. Types absent here
+# are described by filename, path and metadata alone, and get no proxy section.
+CONTENT_EMBEDDABLE: frozenset[str] = frozenset({'audio', 'images', 'videos', 'text'})
 
 # Which OmniDescriptor method produces a natural-language description of each
 # type. Types absent here get no automatic description.
@@ -68,19 +41,9 @@ _DESCRIBE_METHODS: dict[str, str] = {
 
 # ---- lookups ----------------------------------------------------------
 
-def embedding_model_for(type_name: str) -> Optional[EmbeddingModel]:
-    """The embedding model for *type_name*, or None if it has none."""
-    return _EMBEDDING_MODELS.get(type_name)
-
-
-def cache_prefix_for(type_name: str) -> str:
-    """Cache sub-directory for a type's embeddings. Raises if it has no model."""
-    return _require(type_name).cache_prefix
-
-
-def embedding_version_for(type_name: str) -> str:
-    """Cache-key version suffix for a type's embeddings."""
-    return _require(type_name).version
+def has_content_embedding(type_name: Optional[str]) -> bool:
+    """True if files of this type can be embedded from their content."""
+    return bool(type_name) and type_name in CONTENT_EMBEDDABLE
 
 
 def describe_method_for(type_name: Optional[str]) -> Optional[str]:
@@ -88,40 +51,30 @@ def describe_method_for(type_name: Optional[str]) -> Optional[str]:
     return _DESCRIBE_METHODS.get(type_name) if type_name else None
 
 
-def _require(type_name: str) -> EmbeddingModel:
-    model = _EMBEDDING_MODELS.get(type_name)
-    if model is None:
-        raise KeyError(
-            f"Media type '{type_name}' has no embedding model in "
-            f"src/metadata/models.py. Known: {', '.join(_EMBEDDING_MODELS)}."
-        )
-    return model
-
-
 # ---- proxy construction -----------------------------------------------
 
 class _ProxySource:
     """Gives the embedding proxy a model without giving it a search engine.
 
-    Reads embeddings straight from the cache the module engines write to, so a
-    proxy section costs no model load and no file read. The model is loaded only
-    to embed the tag vocabulary, which happens once per vocabulary.
+    Reads embeddings straight from the cache ContentSearch writes to, so a proxy
+    section costs no model load and no file read. The model is loaded only to
+    embed the tag vocabulary, which happens once per vocabulary.
     """
 
-    def __init__(self, cfg, media_type: MediaType, model: EmbeddingModel):
+    def __init__(self, cfg, media_type: MediaType):
         self._cfg = cfg
-        self._model = model
         self.name = media_type.name
+        # Tag vocabularies are text and are embedded on the CPU, so building a
+        # proxy section never pulls the GPU away from a background task.
+        # Only its mirrored model_hash is read here — never a command, so this
+        # cannot wake the worker. The hash must be the GPU worker's, because it
+        # is what ContentSearch keyed the cached embeddings with.
+        self._embedder = get_omni_embedder(cfg)
+        self._query_embedder = get_query_embedder(cfg)
         self._cache = get_two_level_cache(
-            cache_dir=f"{cfg.main.cache_path}/{model.cache_prefix}",
-            name=model.cache_prefix,
+            cache_dir=f"{cfg.main.cache_path}/{CACHE_PREFIX}",
+            name=CACHE_PREFIX,
         )
-
-    @property
-    def _embedder(self):
-        # Embedders are singletons, so this is the same instance the module
-        # engine uses — including its model_hash once anything has loaded it.
-        return self._model.embedder_cls(self._cfg)
 
     @property
     def model_hash(self) -> Optional[str]:
@@ -133,12 +86,14 @@ class _ProxySource:
         model_hash = self.model_hash
         if not model_hash:
             return None
-        return embedding_cache_key(file_path, model_hash, self._model.version)
+        return embedding_cache_key(file_path, model_hash, CONTENT_ALGORITHM_VERSION)
 
     def cached_embedding(self, file_path: str) -> Optional[np.ndarray]:
         """The file's content embedding if already computed, else None.
 
-        Never loads a model and never reads the file.
+        Never loads a model and never reads the file. Content embeddings are
+        stored as a list of chunk vectors; the proxy describes the file as a
+        whole, so the first chunk is the one that represents it.
         """
         key = self.embedding_key(file_path)
         if key is None:
@@ -146,16 +101,20 @@ class _ProxySource:
         value = self._cache.get(key)
         if value is None:
             return None
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return None
+            value = value[0]
         if isinstance(value, torch.Tensor):
             return value.detach().cpu().numpy().ravel().astype(np.float32)
         return np.asarray(value, dtype=np.float32).ravel()
 
     def embed_text(self, text: str) -> np.ndarray:
-        """Embed a tag string. Loads the model if it is not loaded yet."""
-        embedder = self._embedder
-        if not embedder.model_hash:
-            embedder.initiate(self._cfg.main.embedding_models_path)
-        return np.asarray(embedder.embed_text(text), dtype=np.float32).ravel()
+        """Embed a tag string on the CPU."""
+        vector = self._query_embedder.embed_document(text)
+        if vector is None:
+            raise RuntimeError("Query embedder unavailable; cannot embed tag vocabulary.")
+        return np.asarray(vector, dtype=np.float32).ravel()
 
 
 _PROXIES: dict[str, Optional[EmbeddingProxyGenerator]] = {}
@@ -174,11 +133,10 @@ def get_proxy(cfg, media_type: Optional[MediaType]) -> Optional[EmbeddingProxyGe
 
 
 def _build_proxy(cfg, media_type: MediaType) -> Optional[EmbeddingProxyGenerator]:
-    model = _EMBEDDING_MODELS.get(media_type.name)
-    if model is None:
+    if not has_content_embedding(media_type.name):
         return None
     return EmbeddingProxyGenerator(
-        source=_ProxySource(cfg, media_type, model),
+        source=_ProxySource(cfg, media_type),
         tags=media_type.tags,
         threshold=media_type.tags_threshold,
         cache_path=cfg.main.cache_path,

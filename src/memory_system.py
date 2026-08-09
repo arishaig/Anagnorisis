@@ -30,11 +30,10 @@ import threading
 import fs
 
 import src.virtual_file_system as vfs
-from src.audio_embedder import get_shared_audio_embedder
-from src.image_embedder import ImageEmbedder
 from src.metadata import extractors, models
 from src.metadata.media_types import get_registry
 from src.omni_descriptor import OmniDescriptor
+from src.omni_embedder import get_omni_embedder
 from src.app_factory.event_manager import EventManager
 
 
@@ -89,10 +88,10 @@ class MemorySystem:
 
             print("[MemorySystem] Loading embedding/omni models (first use)...")
 
-            # Content embedders — loaded here so a rated file always gets a proxy
-            # section, even if no module has touched that media type this session.
-            get_shared_audio_embedder(cfg, models_folder)
-            ImageEmbedder(cfg).initiate(models_folder)
+            # The shared content embedder — loaded here so a rated file always
+            # gets a proxy section, even if no module has touched that media
+            # type this session.
+            get_omni_embedder(cfg).initiate(models_folder)
 
             # --- Omni (MiniCPM-o) ---
             self._omni = OmniDescriptor(cfg)

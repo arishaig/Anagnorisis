@@ -4,7 +4,7 @@ import datetime
 import numpy as np
 from omegaconf import OmegaConf
 
-from modules.music.engine import MusicSearch
+from src.content_search import get_content_search
 from src.socket_events import CommonSocketEvents
 from src.file_manager import FileManager
 from src.common_filters import CommonFilters
@@ -70,14 +70,13 @@ class MusicModuleServer:
     def initialize(self):
         """Main lifecycle hook to boot up the module."""
 
+        # One shared multimodal embedder backs every media type; this engine just
+        # scopes it to 'audio' files.
         self.cse.show_loading_status('Initializing music search engine...')
-        self.music_search_engine = MusicSearch(cfg=self.cfg)
+        self.music_search_engine = get_content_search(self.cfg, 'audio')
 
-        self.cse.show_loading_status('Loading audio embedding models...')
-        self.music_search_engine.initiate(
-            models_folder=self.cfg.main.embedding_models_path,
-            cache_folder=self.cfg.main.cache_path,
-        )
+        self.cse.show_loading_status('Loading the embedding model...')
+        self.music_search_engine.initiate(models_folder=self.cfg.main.embedding_models_path)
 
         self.cse.show_loading_status('Initializing universal evaluator for music module...')
         self.music_evaluator = UniversalEvaluator()
@@ -377,19 +376,19 @@ class MusicModuleServer:
             file_hash = self.music_search_engine.get_file_hash(file_path)
             files_list_hash_map[file_path] = file_hash
 
-        # Step 1: Compute CLAP embeddings (fast — results are disk-cached)
+        # Step 1: Compute content embeddings (fast — results are disk-cached)
         _progress[0] = 0.1
-        _status(f"Computing CLAP embeddings for {len(files_list)} files...")
-        embeddings = self.music_search_engine.process_audio(
+        _status(f"Computing content embeddings for {len(files_list)} files...")
+        embeddings = self.music_search_engine.process_files(
             files_list, callback=_embedding_callback, media_folder=self.media_directory
-        )  # [N, D] tensor
+        )  # list of per-file chunk vectors
 
 
         # Step 3: Build text descriptions (includes proxy section) + Jina embed
         _progress[0] = 0.4
         _status(f"Computing metadata embeddings for {len(files_list)} files...")
         all_embeddings = []
-        embedding_dim = self.metadata_search_engine.text_embedder.embedding_dim or 1024
+        embedding_dim = self.metadata_search_engine.embedder.embedding_dim or 1024
         for ind, full_path in enumerate(files_list):
             _check_if_paused()
             _progress[0] = 0.4 + (ind + 1) / len(files_list) * 0.3
@@ -399,7 +398,7 @@ class MusicModuleServer:
                     full_path,
                     generate_desc_if_not_in_cache=False,
                 )
-                chunk_embeddings = self.metadata_search_engine.text_embedder.embed_text(description)
+                chunk_embeddings = self.metadata_search_engine.embedder.embed_text(description)
                 if chunk_embeddings is not None and len(chunk_embeddings) > 0:
                     all_embeddings.append(np.array(chunk_embeddings, dtype=np.float32))
                 else:
