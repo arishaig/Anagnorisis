@@ -1,5 +1,13 @@
 # Change History
 
+### Version 0.4.9 (17.08.2026)
+*  **Reading files:**
+    *   Indexing a text file that began with a web link made the app fetch that link because of how `jina-embeddings-v5-omni-small` works. Now any such external call are explicitly prevented.
+*  **New describer:**
+    *   The model that writes descriptions of the files is now `gemma-4-E2B-it`. 
+    *   A description now takes about six seconds to generate.
+    *   The describer checks there is room on the graphics card before starting, and waits for the next round rather than failing partway through a batch.
+    *   Descriptions are also re-made when you change the instructions given to the model, which previously went unnoticed.
 
 ### Version 0.4.8 (10.08.2026)
 *  **One model:**

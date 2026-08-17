@@ -10,9 +10,10 @@ everything we know about the file at that moment:
   * internal metadata (TinyTag / PIL size, etc.),
   * the contents of the ``{file}.meta`` sidecar if present.
 
-The rating itself is **never** written into the .md text — it lives in the
-``FilesLibrary`` table, keyed by soft hash, so the universal evaluator cannot
-"cheat" by reading a score from the text it is learning to predict.
+The rating is written as line 1 and *only* line 1, so that training can strip
+it and embed the rest: the evaluator must never see the score inside the text
+it is learning to predict. Keep it that way — moving the rating anywhere below
+line 1 would silently teach the model to read the answer instead of the file.
 
 These memory files are the single source of truth for training the evaluator:
 even if the original file is later moved, renamed, or disappears (especially
@@ -93,7 +94,7 @@ class MemorySystem:
             # type this session.
             get_omni_embedder(cfg).initiate(models_folder)
 
-            # --- Omni (MiniCPM-o) ---
+            # --- Omni descriptor ---
             self._omni = OmniDescriptor(cfg)
             self._omni.initiate(models_folder)
             self._omni.unload()  # free VRAM until first use

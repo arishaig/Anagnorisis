@@ -18,7 +18,6 @@ that applies to *every* modality, not just text. Use ``embed_query`` for what
 the user typed and ``embed_document`` for what is being searched.
 """
 
-import hashlib
 import multiprocessing
 import os
 import queue
@@ -32,12 +31,67 @@ import torch
 from huggingface_hub import snapshot_download
 
 import src.virtual_file_system as vfs
+from src.model_identity import fingerprint_model_dir
 
 # Anything sentence-transformers accepts directly as one item to encode.
 EmbedInput = Union[str, Sequence[str]]
 
-# Bytes sampled from each end of a weight file when fingerprinting the model.
-_HASH_SAMPLE_BYTES = 65536
+
+def _block_url_fetching() -> None:
+    """Make the model treat a URL as the text it is, never as a file to fetch.
+
+    The model ships its own ``custom_st.py``. Because it takes text and media
+    as the same type — plain strings — it cannot tell them apart by signature,
+    so it guesses: it hands anything starting with ``http://`` or ``https://``
+    to ``urllib.request.urlretrieve`` and sniffs whatever comes back. It runs
+    that guess over every string in every batch, *before* embedding anything.
+
+    A note beginning with a link therefore became an outbound request, and the
+    fetched bytes could be embedded in place of the text. Worse, the media
+    branch is chosen for the whole batch if any one string trips it, so a
+    single link changes how everything alongside it is encoded.
+
+    Reading a file must read the file and nothing else, and a local index must
+    not make requests because of what someone wrote in their notes.
+
+    ``_resolve_input`` is the one choke point: both the media *detection* path
+    and the two real encoding paths funnel through it. Short-circuiting URLs
+    there skips the download, the existence check and the content sniff in one
+    move, and leaves local media entirely to the model's own code. We only ever
+    pass local paths anyway — remote files are copied locally first.
+    """
+    import sys
+
+    patched = []
+    for name, module in list(sys.modules.items()):
+        # Only look inside the model's own vendored code. Reaching into every
+        # loaded module would mean calling getattr on things like torchaudio,
+        # whose lazy attributes have side effects of their own.
+        if module is None or 'transformers_modules' not in name:
+            continue
+        resolve = getattr(module, '_resolve_input', None)
+        if not callable(resolve) or not hasattr(module, '_is_media_string'):
+            continue
+
+        if not getattr(resolve, '_url_blocked', False):
+            def _resolve_local_only(x, _original=resolve):
+                if isinstance(x, str) and x.startswith(('http://', 'https://')):
+                    return ('text', x)
+                return _original(x)
+
+            _resolve_local_only._url_blocked = True
+            module._resolve_input = _resolve_local_only
+            # Unreachable for URLs now, but it is module-level and cheap to
+            # make harmless in case a future version calls it elsewhere.
+            module._download_if_url = lambda x: x
+        patched.append(name)
+
+    if not patched:
+        # The model's internals changed shape. Say so loudly: the silent
+        # failure mode is the network access quietly coming back.
+        print("[OmniEmbedder] WARNING: could not disable the model's URL "
+              "fetching — it may reach the network for text that looks like a "
+              "link. Check custom_st.py for '_resolve_input'.")
 
 
 def cosine_similarity(embeddings, query_embedding) -> List[float]:
@@ -95,6 +149,7 @@ class _OmniEmbedderImpl:
             device=str(self.device),
         )
         self.model.eval()
+        _block_url_fetching()
 
         self.max_seq_length = int(getattr(self.model, 'max_seq_length', 0) or 0)
         self.model_hash = self._calculate_model_hash(local_path)
@@ -118,56 +173,20 @@ class _OmniEmbedderImpl:
         return int(dim) if dim else None
 
     def _calculate_model_hash(self, local_path: str) -> str:
-        """Fingerprint what actually determines a vector, so a model swap
-        invalidates every cache that holds one — and nothing else does.
+        """Fingerprint what determines a vector: the weights plus the settings
+        that change how they are applied.
 
-        Deliberately hashes the weight *files on disk* rather than the loaded
-        ``state_dict()``. This checkpoint ships no trained audio LoRA, so PEFT
-        initialises 384 ``audio_tower`` ``lora_A`` tensors randomly on every
-        load. Their ``lora_B`` counterparts are all zero, so they contribute
-        nothing to an embedding — but they changed the state_dict hash on every
-        load, which meant every restart (and every idle respawn) minted fresh
-        cache keys and re-embedded the whole library.
-
-        ``task`` and the truncation dim are part of the identity because they
-        change the vector while leaving the files untouched.
+        ``task`` selects a different LoRA and the truncation dim changes the
+        vector's length, so both alter the output while leaving the files
+        untouched — see :mod:`src.model_identity` for why this reads the files
+        rather than the loaded model.
         """
-        md5 = hashlib.md5()
-        md5.update(str(self.cfg.embedder.model_name).encode('utf-8'))
-        md5.update(str(getattr(self.cfg.embedder, 'task', 'retrieval')).encode('utf-8'))
-        md5.update(str(self._truncate_dim()).encode('utf-8'))
-        try:
-            for rel in sorted(self._model_files(local_path)):
-                path = os.path.join(local_path, rel)
-                size = os.path.getsize(path)
-                md5.update(rel.encode('utf-8'))
-                md5.update(str(size).encode('utf-8'))
-                with open(path, 'rb') as fh:  # sample the ends; never read GBs
-                    md5.update(fh.read(_HASH_SAMPLE_BYTES))
-                    if size > _HASH_SAMPLE_BYTES * 2:
-                        fh.seek(-_HASH_SAMPLE_BYTES, os.SEEK_END)
-                        md5.update(fh.read(_HASH_SAMPLE_BYTES))
-        except OSError as exc:
-            # A name-only hash still keys the cache consistently; it just stops
-            # noticing an in-place weight swap.
-            print(f"OmniEmbedder (Worker): Could not fingerprint weight files "
-                  f"({exc}); falling back to the model name alone.")
-        return md5.hexdigest()
-
-    @staticmethod
-    def _model_files(local_path: str):
-        """Relative paths of the files that define the model.
-
-        Skips the transient ones a download leaves behind — a ``.lock`` or a
-        half-written ``.incomplete`` would otherwise change the hash.
-        """
-        skip_suffixes = ('.lock', '.incomplete', '.tmp', '.pyc')
-        for root, dirs, files in os.walk(local_path):
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
-            for name in files:
-                if name.startswith('.') or name.endswith(skip_suffixes):
-                    continue
-                yield os.path.relpath(os.path.join(root, name), local_path)
+        return fingerprint_model_dir(
+            local_path,
+            self.cfg.embedder.model_name,
+            getattr(self.cfg.embedder, 'task', 'retrieval'),
+            self._truncate_dim(),
+        )
 
     # -- embedding ------------------------------------------------------
 
@@ -683,6 +702,9 @@ class QueryEmbedder:
                     },
                 )
                 self._model.eval()
+                # The search path is the more exposed one: a query pasted into
+                # the search bar reaches this directly.
+                _block_url_fetching()
                 self._load_attempted = True
                 print(f"[QueryEmbedder] Loaded on CPU for search queries "
                       f"(modality={self.modality!r}).")

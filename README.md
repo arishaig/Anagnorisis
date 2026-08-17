@@ -29,6 +29,7 @@ Here is the main pipeline of working with the project:
 You repeat these steps again and again, getting each time model that better and better aligns to your preferences.  
 
 The big vision of this project is to provide a platform that creates a local, private model of your interests. That likes what you like and sees importance where you would see it. Then you can use this model to search and filter local and global information on your behalf in a way you would do it yourself but in a much faster and efficient way. Making this platform (in the future) a go to place to see news, recommendations and insights, and so on, tailored specifically for you. As the internet gets populated with bots and AI slop, a platform like this might create a necessary filter to be able to navigate in this chaotic information space efficiently.
+
 ## How search works
 
 There are three search modes, that are used for different kind of search:
@@ -40,9 +41,27 @@ There are three search modes, that are used for different kind of search:
 Two rules the project holds to:
 
 - **Searching never uses the GPU.** Your query is embedded on the CPU, in-process. The GPU is used only by background tasks you can see and pause on the Task Manager page.
-- **Remote files are never downloaded automatically.** Background indexing reads only local files.
+- **Remote files are never downloaded automatically.** Background indexing reads only local files. Only `.meta` files are read automatically from the remote servers as it is serves exactly as lightweight indexing proxy for actual files.
 
 Because searching reads from the index rather than building it, files that have not been indexed yet simply do not appear in results. The status bar reports how many are still pending.
+
+## How memory works
+
+Every time you rate a file, the project writes a small Markdown file recording everything it knew about that file at that moment. They accumulate in `project_config/memory/<date>/<soft-hash>.md` and are the material the recommendation model is trained on.
+
+A memory file holds the rating on its first line, then the file's name and path, the zero-shot tags and fingerprint from the embedding model, the descriptor model's description of the content, internal metadata (EXIF, ID3 and so on), and the contents of the file's `.meta` sidecar if it has one. In other words, a written account of the file with text as a proxy of its content.
+
+**Why keep an proxy instead of pointing at the file:** Because the file path is not a reliable place to keep account of. It gets renamed, reorganised, moved to another drive, deleted; if it lives on someone else's server it can disappear without warning. A rating attached to a path would quietly rot. The judgement you made is the part worth keeping, and it stays valid whether or not the original file is still reachable.
+
+The file is identified by a **soft hash**: a fingerprint computed from a few sampled blocks of its content plus its size, rather than the whole file. It is fast even on large files and cheap over a network, and because it describes content rather than location, moving or renaming a file does not lose a memory about rating the file. Memory files are grouped in dated folders, and when the same file has been rated more than once the most recent entry wins, so re-rating something supersedes your earlier opinion instead of contradicting it. In future It might also allow to track the change in the preferences over time and build even better time-dependent recommendations.
+
+Rating a file is **an explicit action you took**, which is why this is the one case that allows to fetch a remote file, so the project automatically downloading it to describe it properly before saving into a memory. Background indexing never does this. The description and memory event creation happens as a background task and shown in the tasks manager UI.
+
+**How the recommendation model uses it:** Training walks the memory folder and reads each file as a pair: the description, and the rating you gave it. The rating line is stripped before the description is embedded, so the model never sees the score it is being asked to predict, it has to learn from the content, not read the answer off the page.
+
+What comes out is an evaluator model that could predict a rating for a file it has never seen before, stored as its `model_rating` in the DB for fast access. Sorting and recommendation then use your own rating where you have given one and fall back to the model's guess where you have not, so the ranking is your judgement wherever it exists and the model's imitation of it everywhere else. Some modules, such as the `Music` module additionally folds in play counts, skips and how long ago something was last played to build better recommendation list.
+
+This is what creates the loop described at the top of this README: rate some files, train, let the model rate the rest, correct it where it is wrong. Each correction becomes another memory file, and the next round starts from a slightly better model.
 
 ## Running from Docker
 The preferred way to run the project is from Docker. This should be much more stable than running it from the local environment, especially on Windows.
@@ -150,7 +169,7 @@ ERROR: for {your container name} Cannot start service anagnorisis: error while c
 You have to create the folder specified as your project config mount target (the path before `:/mnt/project_config` in your `docker-compose.override.yaml`) manually on your host machine. Docker sometimes cannot create such folders by itself due to permission issues.
 
 ## Additional notes for installation
-The Docker image (Python dependencies, PyTorch with CUDA runtime, system libraries) takes approximately 8 GB of disk space after building. On first startup the application downloads the required ML models that would take roughly 20 GB, most of it the descriptor model. If you use the project heavily with active use of external modules, their caches can grow to several additional gigabytes. As a rough total estimate, budget around 40 GB of free disk space before starting.
+The Docker image (Python dependencies, PyTorch with CUDA runtime, system libraries) takes approximately 8 GB of disk space after building. On first startup the application downloads the required ML models that would take roughly 14 GB, most of it the descriptor model. If you use the project heavily with active use of external modules, their caches can grow to several additional gigabytes. As a rough total estimate, budget around 20-25 GB of free disk space before starting.
 
 For best user experience I would recommend running the project with relatively modern Nvidia GPU with at least 8Gb of VRAM and 32Gb of RAM. At least this is the configuration I am using myself. However, the project should be able to run on lower configurations, but performance might be poor especially without CUDA-friendly GPU. Note that CPU-only mode might be significantly slower.
 
@@ -204,12 +223,13 @@ The project runs two models:
 
 [jinaai/jina-embeddings-v5-omni-small](https://huggingface.co/jinaai/jina-embeddings-v5-omni-small) — **the embedding model**. One model for every kind of content: text, images, audio and video all land in a single shared vector space. This replaced the three separate models the project used before (CLAP for audio, SigLIP for images, Qwen3 for text), each of which had its own incompatible space.
 
-[Dystrio/MiniCPM-o-4_5-Sculpt-Throughput](https://huggingface.co/dystrio/MiniCPM-o-4_5-Sculpt-Throughput) — **the descriptor model**, which writes a natural-language description of a file. An optimized version of [MiniCPM-o-4_5](https://huggingface.co/openbmb/MiniCPM-o-4_5).
+[google/gemma-4-E2B-it](https://huggingface.co/google/gemma-4-E2B-it) — **the descriptor model**, which writes a natural-language description of a file. It reads images, audio, video and text. That description is what metadata search indexes and what a data server publishes about a file in its `.meta` sidecar.
 
 All models are downloaded automatically when the project is started for the first time. This might take some time depending on the internet connection. You can see the progress inside `logs/anagnorisis-app_log.txt` file that will appear in the project's root folder if you run the project from the Docker container.
 
-**Huge thanks to [Dystrio](https://huggingface.co/dystrio) for optimizing the MiniCPM-o-4_5 model specifically for the Anagnorisis project, making it more then 2 times faster at token generation speed and providing even bigger context window with minimal loss in model's accuracy.**
+## Acknowledgments
 
+**Huge thanks to [Dystrio](https://huggingface.co/dystrio) for optimizing the MiniCPM-o-4_5 model (used in the early days of the project) specifically for the Anagnorisis project.**
 
 ## Wiki
 The project has its own wiki that is integrated into the project itself, you might access it by running the project, or simply reading it as markdown files.

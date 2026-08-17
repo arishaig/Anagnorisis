@@ -30,6 +30,20 @@ from src.metadata.search import get_metadata_search
 from src.scheduler import Scheduler
 
 
+def _release_embedder(cfg):
+    """Free the embedder's VRAM so the descriptor can have the card.
+
+    Imported lazily: this module is loaded during startup, and the embedder
+    pulls in torch. Failing here is not worth aborting a description pass —
+    the worst case is that the descriptor refuses to load and retries later.
+    """
+    try:
+        from src.omni_embedder import get_omni_embedder
+        get_omni_embedder(cfg).unload()
+    except Exception as exc:
+        print(f'[Metadata: describe] Could not release the embedder: {exc}')
+
+
 class MetadataIndexer:
     """Owns the two universal metadata schedulers."""
 
@@ -102,6 +116,11 @@ class MetadataIndexer:
         batch, count_label = self._take_batch(candidates, 'auto_description_batch_size', 10)
 
         def task(ctx):
+            # The descriptor needs almost the whole card, so it cannot start
+            # while the embedder is still resident — it would refuse to load and
+            # this batch would be skipped. Both restart transparently on their
+            # next use, so releasing the embedder here costs only its reload.
+            _release_embedder(self.cfg)
             try:
                 for i, fp in enumerate(batch):
                     ctx.check()
@@ -121,6 +140,7 @@ class MetadataIndexer:
 
     def _load_descriptor_task(self, ctx):
         ctx.update(0.0, 'Loading the descriptor to learn its model hash...')
+        _release_embedder(self.cfg)
         try:
             self.metadata_search.load_descriptor()
         finally:

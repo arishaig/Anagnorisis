@@ -55,16 +55,29 @@ embedder: # The single model that embeds everything — text, images, audio and 
   video_frames: 16 # Evenly spaced frames per video (the model accepts up to 32)
   video_frame_max_size: 512 # Longest side of each sampled frame, in pixels
   idle_timeout_seconds: 120 # Unload the model after this long without use, to free VRAM
-omni:
-  model_name: "dystrio/MiniCPM-o-4_5-Sculpt-Throughput"
-  device: cuda # Device for omni descriptor (cpu/cuda).
-  load_in_4bit: true  # BitsAndBytes 4-bit quantization (~5 GB VRAM instead of ~18 GB)
+omni: # The descriptor: writes the natural-language description of a file.
+  # That description is what metadata search indexes, what the evaluator rates
+  # from, and the only thing remote servers publish about a file — so it is the
+  # one representation shared between machines running different models.
+  model_name: "google/gemma-4-E2B-it"
+  load_in_4bit: true # 4-bit NF4: ~6.7 GB of VRAM, peaking near 6.9 GB while it
+                     # writes. Unquantized needs 11 GB and will not fit an 8 GB card.
+  cpu_offload_embeddings: false # Escape hatch for cards under ~8 GB: moves the
+                     # big embedding table into system RAM, cutting VRAM to
+                     # ~2.2 GB. Measured ~20x slower (6s -> 125s per
+                     # description), because the table is read once per token.
   max_new_tokens: 256
   do_sample: false
   temperature: 0.2
   video_sample_max_size: 512 # Max dimension (width or height) for video frame sampling to the omni descriptor
   image_max_size: 512 # Max dimension (width or height) for input images to the omni descriptor
-  min_free_vram_to_run: 7680 # Minimum free VRAM in MB required to run the omni descriptor (prevents OOM crashes)
+  min_free_vram_to_run: 7168 # Refuse to load with less than this much free VRAM,
+                     # in MB. Measured peak is 6842 MB, so on an 8 GB card this
+                     # effectively means "only when nothing else is resident" —
+                     # correct, since the descriptor and the embedder cannot
+                     # share the card. A background pass that is refused simply
+                     # retries on its next tick, which is far cheaper than an
+                     # out-of-memory abort halfway through a batch.
   image_prompt: "Describe this image in detail. Include objects, scene, colors, actions, and any text visible."
   audio_prompt: "Describe the audio in detail. Include instruments, genre, mood, tempo, and any notable features."
   video_prompt: "Describe the video in detail. Include the scene, actions, objects, and any notable events."
@@ -77,8 +90,8 @@ evaluator:
 metadata_search:
   # Auto-desc scheduler — runs OmniDescriptor on local files only.
   # Set to null/0 to disable.
-  auto_description_interval_minutes: 30
-  auto_description_batch_size: 10
+  auto_description_interval_minutes: 20
+  auto_description_batch_size: 100
   # Metadata-embedding scheduler — runs TextEmbedder on local + remote files.
-  embedding_interval_minutes: 10
-  embedding_batch_size: 3000
+  embedding_interval_minutes: 20
+  embedding_batch_size: 1000
