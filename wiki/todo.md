@@ -14,7 +14,6 @@ Remove from DB images that no longer exist in the media folder and have no user 
 Make number of images per page adjustable via config.yaml file.  
 Make number of columns of images presented dependent on the screen size. 
 Add BRISQUE score filter for simple image quality assessment. 
-Replace SigLIP model with more powerful MobileClip2.
 
 ### Train page
 Disable the start button if fine-tuning has already started.  

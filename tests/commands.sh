@@ -12,7 +12,8 @@ docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest
 # Or run individual test modules:
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_config_loader.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_caching.py -v
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_embedding_proxy.py -v
+docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_metadata_proxy.py -v
+docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_model_hash.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_file_manager.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_common_filters.py -v
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest tests/test_task_manager.py -v
@@ -23,15 +24,10 @@ docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tier 2 — ML model tests (requires GPU + model downloads)
-# Run a specific model/engine script:
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.text_embedder
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.image_embedder
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.audio_embedder
+# One embedder now covers every media type, so there is one script to run
+# instead of one per modality:
+docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.omni_embedder
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.omni_descriptor
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.universal_evaluator
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m modules.text.engine
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m modules.images.engine
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m modules.music.engine
-docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m modules.videos.engine
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.share_api
 docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test python3 -m src.recommendation_engine

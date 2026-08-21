@@ -6,7 +6,6 @@ import StarRatingComponent from '/modules/StarRating.js';
 
 //// CONSTANTS AND VARIABLES
 let num_files_on_page = 24;
-let num_files_in_row = 6; // TODO: calculate from the screen size
 let selected_files = [];
 let currentFilePath = null; // To store currently opened file path in modal
 
@@ -81,7 +80,7 @@ function renderCustomData(fileData) { // Function for custom data rendering
     data.style.wordBreak = 'break-all';
 
     $(data).append('<b>Path:</b>&nbsp;' + fileData.file_path + '<br>');
-    $(data).append('<b>Hash:</b>&nbsp;' + shortenHash(fileData.hash) + '<br>');
+    // $(data).append('<b>Hash:</b>&nbsp;' + shortenHash(fileData.hash) + '<br>');
 
     // User Rating
     if (fileData.file_info.user_rating != null) {
@@ -170,22 +169,28 @@ function setupAutoUpdate() {
 $(document).ready(function() {
     let paginationComponent;
 
+    // Remote folders disable 'semantic-content' (it would force-download
+    // unknown content). The empty path ('All Files') is a mix of local and
+    // remote, so the mode stays available there — non-local files are
+    // filtered out at search time on the backend.
+    const isFolderRemoteOnly = path !== '' && path !== '/' && !path.startsWith('osfs://');
+    const enableModes = isFolderRemoteOnly
+        ? ['file-name', 'semantic-metadata']
+        : ['file-name', 'semantic-content', 'semantic-metadata'];
+
     // Instantiate SearchBarComponent
     const searchBar = new SearchBarComponent({
         container: '#search_bar_container',
-        enableModes: ['file-name', 'semantic-content'], // disable here as needed
+        enableModes: enableModes,
         showOrder: true,
         showTemperature: true,
         temperatures: [0, 0.2, 1, 2],
-        keywords: ['rating'], //['recommendation', 'random', 'file_size', 'length', 'similarity'],
+        keywords: ['rating', 'file_size'], //['recommendation', 'random', 'file_size', 'length', 'similarity'],
         autoSyncUrl: true,
         ensureDefaultsInUrl: true,
     });
 
     const search_state = searchBar.getState();
-
-    // Request current media folder path
-    socket.emit('emit_text_page_get_path_to_media_folder');
 
     // Request files from the main media folder
     // --- Folder View ---
@@ -234,8 +239,8 @@ $(document).ready(function() {
                 
                 const modalStarRating = new StarRatingComponent({
                     callback: (rating) => {
-                        socket.emit('emit_text_page_set_text_rating', {
-                            hash: fileData.hash,
+                        socket.emit('emit_set_file_rating', {
+                            // hash: fileData.hash,
                             file_path: fileData.file_path,
                             rating: rating,
                         });
@@ -262,7 +267,6 @@ $(document).ready(function() {
                 // Switch to Raw Text tab initially
                 showTab('raw');
             },
-            numColumns: num_files_in_row, 
         });
 
         // Update or Initialize Pagination Component
@@ -339,20 +343,6 @@ $(document).ready(function() {
     // Display current search status
     socket.on('emit_show_search_status', (status) => {
         $('.search-status').html(status);
-    });
-
-    // Show current media folder path
-    socket.on('emit_text_page_show_path_to_media_folder', (current_path) => {
-        $('#path_to_media_folder').val(current_path);
-    });
-
-    // Update path to the media folder
-    $('#update_path_to_media_folder').click(function() {
-        socket.emit('emit_text_page_update_path_to_media_folder', $('#path_to_media_folder').val());
-        // refresh page after a short delay
-        setTimeout(function() {
-            location.reload();
-        }, 500);
     });
 
     // Servers modal

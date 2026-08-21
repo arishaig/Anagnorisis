@@ -147,6 +147,14 @@ class DiskCache:
         self._last_stats_snapshot = {"reads": 0, "writes": 0, "bytes_read": 0, "bytes_written": 0}
         self._last_pending_snapshot = 0
 
+        # In-memory cache of loaded shard data dicts.
+        # Populated on the first disk read of a shard, then updated by every
+        # set() and _flush_shard(). Eliminates repeated disk I/O when the same
+        # shard is queried many times in a row (the typical case for
+        # process_files looping over thousands of paths that all miss cache).
+        self._shard_data: Dict[int, Dict[str, Tuple[Any, float]]] = {}
+        self._shard_data_lock = threading.Lock()
+
     @staticmethod
     def _shard_for_key(key: str) -> int:
         b = key.encode('utf-8', 'surrogatepass')
@@ -199,6 +207,23 @@ class DiskCache:
                 data.pop(k, None)
             removed = len(expired)
 
+        return data, removed
+    
+    def _get_or_load_shard(self, shard: int, shard_path: str) -> Tuple[Dict[str, Tuple[Any, float]], int]:
+        """Return shard data from the in-memory cache, loading from disk on first access.
+
+        After the first read of a shard, subsequent lookups are served from RAM
+        without touching the disk. The cached dict is shared with callers; do not
+        mutate it — use ``set()`` / ``_flush_shard()`` for that.
+        """
+        with self._shard_data_lock:
+            cached = self._shard_data.get(shard)
+        if cached is not None:
+            return cached, 0
+
+        data, removed = self._load_and_clean_shard(shard_path)
+        with self._shard_data_lock:
+            self._shard_data[shard] = data
         return data, removed
 
     def _atomic_write_pickle(self, path: str, data: Dict[str, Tuple[Any, float]]) -> None:
@@ -308,14 +333,27 @@ class DiskCache:
             lock = self._locks.get(shard) or threading.Lock()
             self._locks[shard] = lock
         with lock:
-            data, _ = self._load_and_clean_shard(path)
+            # Prefer in-memory cache so the flush doesn't trigger another disk read
+            # just to merge the pending updates.
+            with self._shard_data_lock:
+                cached = self._shard_data.get(shard)
+            if cached is not None:
+                # Copy so the flush doesn't mutate the live cache mid-read.
+                data = dict(cached)
+            else:
+                data, _ = self._load_and_clean_shard(path)
             data.update(updates)  # pending wins
+
             if data:
                 self._atomic_write_pickle(path, data)
             else:
                 # Only rewrite empty shard if file exists (to clear expired/corrupt content)
                 if os.path.exists(path):
                     self._atomic_write_pickle(path, data)
+
+            # Keep the cache in sync with what we just wrote to disk.
+            with self._shard_data_lock:
+                self._shard_data[shard] = data
 
     def _flusher_loop(self) -> None:
         """Periodically flush all shards with pending updates."""
@@ -353,7 +391,8 @@ class DiskCache:
                 return value
 
         with lock:
-            data, removed = self._load_and_clean_shard(shard_path)
+            # Prefer in-memory shard cache over reading from disk on every call.
+            data, removed = self._get_or_load_shard(shard, shard_path)
 
             # Warm RAM with the whole shard (throttled)
             self._maybe_warm_ram(shard, data)
@@ -404,7 +443,7 @@ class DiskCache:
 
         # Immediate write-through (existing behavior)
         with lock:
-            data, _ = self._load_and_clean_shard(shard_path)
+            data, _ = self._get_or_load_shard(shard, shard_path)
             data[key] = (value, time.time())
             self._atomic_write_pickle(shard_path, data)
 
@@ -444,19 +483,23 @@ class TwoLevelCache:
     ):
         self.ram = RAMCache(ram_ttl_seconds)
 
-        # When DiskCache loads a shard, push all its values into RAM (one-hot timestamps).
-        def _on_shard_loaded(mapping: Dict[str, Any]):
-            for k, v in mapping.items():
-                self.ram.set(k, v)
+        if cache_dir is None:
+            # None is used to indicate a RAM-only cache (no disk persistence)
+            self.disk = None
+        else:
+            # When DiskCache loads a shard, push all its values into RAM (one-hot timestamps).
+            def _on_shard_loaded(mapping: Dict[str, Any]):
+                for k, v in mapping.items():
+                    self.ram.set(k, v)
 
-        self.disk = DiskCache(
-            cache_dir=cache_dir,
-            ttl_seconds=disk_ttl_seconds,
-            on_shard_loaded=_on_shard_loaded,
-            warm_interval_seconds=warm_interval_seconds,
-            refresh_after_seconds=refresh_after_seconds,
-            name=name,
-        )
+            self.disk = DiskCache(
+                cache_dir=cache_dir,
+                ttl_seconds=disk_ttl_seconds,
+                on_shard_loaded=_on_shard_loaded,
+                warm_interval_seconds=warm_interval_seconds,
+                refresh_after_seconds=refresh_after_seconds,
+                name=name,
+            )
 
     def get(self, key: str) -> Optional[Any]:
         # RAM first
@@ -465,14 +508,44 @@ class TwoLevelCache:
             return val
 
         # Disk next. Disk will warm RAM with the whole shard.
-        val = self.disk.get(key)
-        if val is not None:
-            # Ensure RAM TTL is refreshed for the accessed key as well.
-            self.ram.set(key, val)
-        return val
+        if self.disk is not None:
+            val = self.disk.get(key)
+            if val is not None:
+                # Ensure RAM TTL is refreshed for the accessed key as well.
+                self.ram.set(key, val)
+            return val
+        
+        return None
 
     def set(self, key: str, value: Any, save_to_disk: bool = True) -> None:
         # Write-through both tiers
         self.ram.set(key, value)
-        if save_to_disk:
+        if save_to_disk and self.disk is not None:
             self.disk.set(key, value)
+
+# ---------------------------------------------------------------------------
+# Process-wide instance registry
+# ---------------------------------------------------------------------------
+
+_TLC_SINGLETONS: Dict[str, "TwoLevelCache"] = {}
+_TLC_LOCK = threading.Lock()
+
+
+def get_two_level_cache(cache_dir: str, **kwargs) -> "TwoLevelCache":
+    """
+    Return a shared TwoLevelCache instance for this cache_dir within the process.
+    First caller's kwargs win; later calls ignore differing kwargs.
+
+    Two instances over one directory would each keep their own RAM tier, so a
+    value written through one would only be visible to the other after a disk
+    read. Always go through here rather than constructing TwoLevelCache directly
+    for a directory someone else may also use.
+    """
+    abs_dir = os.path.abspath(cache_dir)
+    with _TLC_LOCK:
+        inst = _TLC_SINGLETONS.get(abs_dir)
+        if inst is not None:
+            return inst
+        inst = TwoLevelCache(cache_dir=abs_dir, **kwargs)
+        _TLC_SINGLETONS[abs_dir] = inst
+        return inst

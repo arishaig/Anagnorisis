@@ -22,7 +22,7 @@ function renderImagePreview(fileData) { // Function for Images module preview
     imageContainer.style.display = 'flex';
     imageContainer.style.justifyContent = 'center'; 
     imageContainer.style.alignItems = 'center';
-    $(imageContainer).addClass('mb-2');
+    // $(imageContainer).addClass('mb-2');
 
 
     imageDataDiv.append(imageContainer);
@@ -61,12 +61,6 @@ function renderCustomData(fileData) { // Function for custom data rendering
     filePathElement.className = 'file-info file-path';
     filePathElement.innerHTML = `<b>Path:</b>&nbsp;${fileData.file_path}`;
     dataContainer.appendChild(filePathElement);
-
-    // Hash
-    const hashElement = document.createElement('p');
-    hashElement.className = 'file-info file-hash';
-    hashElement.innerHTML = `<b>Hash:</b>&nbsp;${fileData.hash}`;
-    dataContainer.appendChild(hashElement);
 
     // File Size
     const fileSizeElement = document.createElement('p');
@@ -212,10 +206,19 @@ function renderCustomData(fileData) { // Function for custom data rendering
 
     let paginationComponent; // Declare paginationComponent in the scope 
 
+    // Remote folders disable 'semantic-content' (it would force-download
+    // unknown content). The empty path ('All Files') is a mix of local and
+    // remote, so the mode stays available there — non-local files are
+    // filtered out at search time on the backend.
+    const isFolderRemoteOnly = path !== '' && path !== '/' && !path.startsWith('osfs://');
+    const enabledModes = isFolderRemoteOnly
+      ? ['file-name', 'semantic-metadata']
+      : ['file-name', 'semantic-content', 'semantic-metadata'];
+
     // Instantiate SearchBarComponent
     const searchBar = new SearchBarComponent({
       container: '#search_bar_container',
-      enableModes: ['file-name', 'semantic-content', 'semantic-metadata'], // disable here as needed
+      enableModes: enabledModes, 
       showOrder: true,
       showTemperature: true,
       temperatures: [0, 0.2, 1, 2],
@@ -306,7 +309,6 @@ function renderCustomData(fileData) { // Function for custom data rendering
           renderCustomData: renderCustomData, // Pass the custom data rendering function
           // renderActions: renderActions, // Pass the actions rendering function
           handleFileClick: (fileData) => {},
-          numColumns: num_files_in_row, 
           onContextMenu: createContextMenuForFile,
           onMetaOpen: openExternalMetaEditorForFile,
       });

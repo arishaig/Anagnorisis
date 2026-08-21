@@ -1,5 +1,89 @@
 # Change History
 
+### Version 0.4.9 (17.08.2026)
+*  **Reading files:**
+    *   Indexing a text file that began with a web link made the app fetch that link because of how `jina-embeddings-v5-omni-small` works. Now any such external call are explicitly prevented.
+*  **New describer:**
+    *   The model that writes descriptions of the files is now `gemma-4-E2B-it`. 
+    *   A description now takes about six seconds to generate.
+    *   The describer checks there is room on the graphics card before starting, and waits for the next round rather than failing partway through a batch.
+    *   Descriptions are also re-made when you change the instructions given to the model, which previously went unnoticed.
+
+### Version 0.4.8 (10.08.2026)
+*  **One model:**
+    *   CLAP, SigLIP and Qwen3-Embedding are gone. A single model `jina-embeddings-v5-omni-small` now embeds text, images, audio and video into one shared space, so a typed query can rank a photo, a song and a description against each other in the same list. 
+    *   Videos module have a `semantic-content-based` search now.
+    *   A whole document now becomes one embedding rather than being cut into pieces and averaged; only text longer than the model's very large context window is split at all.
+*  **Search stays off the GPU:**
+    *   Queries are embedded on the processor, not the graphics card. The GPU is reserved for background tasks, which are the ones you can watch and pause on the Task Manager page.
+*  **Caching:**
+    *   Tag lists are stored per model, so switching the embedding model no longer reuses the previous one's tags. Changing search quality or the embedding size correctly invoke a refresh of the tags' embeddings.
+
+### Version 0.4.7 (06.08.2026)
+*  **Media types:**
+    *   File extensions and tag vocabularies moved out of `config.yaml` into a new `media_types/` folder, one entry per kind of content: audio, images, videos, text and documents. `config.yaml` shrank from 267 lines to about 70.
+    *   Metadata search no longer belongs to any module. It recognises a file by its extension, so it can describe and index anything on any server, whether or not a module handles that kind of file.
+*  **Tags:**
+    *   Tag vocabularies grew from ~1,100 to ~9,100 tags and now cover videos, text and documents too. Images gained franchises, screenshots, memes, charts and scanned paperwork; audio gained podcasts, audiobooks, speech and everyday sounds. The aim was to describe what actually sits on a normal machine, not just music and photographs.
+*  **Indexing:**
+    *   Descriptions and search embeddings are now built by two shared background passes instead of one per module. A single sweep covers every server, local and remote, and every kind of file at once.
+    *   Files are picked at random rather than folder by folder, so every folder gets some results early instead of the last ones waiting for days.
+*  **Descriptions:**
+    *   Image metadata (size, format, EXIF) was never read successfully and was stored as an error message. Real values appear now.
+*  **Servers:**
+    *   Fixed a crash that happened when a remote server became unreachable while files were being listed.
+    *   One shared server monitor instead of a separate background checker per module.
+
+### Version 0.4.6 (23.07.2026)
+*  **Remote-aware metadata handling:**
+    *   Metadata-based search (`semantic-metadata` mode) no longer triggers silent downloads of remote files. Cache keys for auto-descriptions now use only file stats (path + size + mtime + model hash) instead of a content hash, so the first lookup after a restart — or the first time a remote file is ever seen — only performs a cheap stat, never reads file content.
+    *   For remote files, `MetadataSearch.generate_full_description` (used both by the search hot path and the rating scheduler) now includes only `filename + path + .meta sidecar`. Auto-descriptions, internal file metadata (EXIF / ID3 / moviepy), and embedding proxies are intentionally skipped — they would each require downloading the original file.
+*  **Faster search hot path on first contact:**
+    *   `get_file_hash` is no longer called anywhere on the search hot path. Cache lookups for both `auto_desc::` and `meta::` use stat-only keys, so an empty `.meta` cache directory no longer forces a download of every file just to look up the description.
+*  **Safe background schedulers:**
+    *   `make_scheduled_description_check` no longer crashes: it now iterates only `osfs:///mnt/media/` (local-only) instead of the previously-missing `file_manager.list_all_files()`. Remote files continue to be skipped entirely from the description scheduler.
+    *   Both the description scheduler and the embedding scheduler remain restricted to local files. Only the rating scheduler walks remote files, and only because ratings are derived from the (now-safe) thin description path.
+*  **`.meta` reading is now hard-capped at 32 KB:**
+    *   Previously the cap was `30 000 chars OR 300 lines` — small `.meta` files with very long lines could exceed the byte budget. The new `_MAX_META_BYTES = 128 * 1024` makes the cap unambiguous and matches the documented "downloaded up to N kb" behaviour for remote files.
+
+### Version 0.4.5 (21.07.2026)
+*  **Search Performance & Reliability:**
+    *   "Content-based" semantic search was iterating the full list of matched files on every progress update to count cache hits inside the status callback, making the lookup O(N²) instead of O(N). Replaced the per-iteration list scan with a running counter; subsequent searches over cached embeddings now complete almost immediately.
+    *   "Content-based" semantic search now skips remote (WebDAV/SFTP/FTP) files instead of force-downloading their content to embed it. Only local files are processed for content-based matching; remote files remain searchable via filename and metadata modes. Previously, browsing a folder that contained remote files with this mode enabled could hang or time out.
+*  **Bug Fixes:**
+    *   Fixed semantic search in the music module. It was failing for some files silently falling back to plain text search or returning nothing.
+    *   Fixed semantic search in the text module. File metadata extraction was hanging on large files because `get_text_metadata` read the entire file every time; it is now a stat-only O(1) operation. File previews are now capped at the first 4 KiB so even multi-gigabyte logs load instantly.
+    *   Files with no computed embeddings yet were appearing in the result list as if they had a real score, making sort-by-rating unreliable. Such files are now hidden from the list and counted separately so the user can see what is still being processed in the background.
+    *   Fixed metadata extraction process for text files.
+*  **Background Embedding Computation:**
+    *   New automatic background scheduler for the Music module that periodically scans the cache and computes embeddings for any files that don't have one yet. Configurable via `embedding_update_interval_minutes` (default 10) and `embedding_update_batch_size` (default 1000) in `config.yaml`. New files added to your library now get their embeddings in the background so they become searchable almost immediately, without requiring a manual batch run.
+
+### Version 0.4.4 (18.07.2026)
+*  **Search Performance & Reliability:**
+    *   Search queries are now embedded on CPU directly in the main process, so searching no longer competes with background tasks (rating, description, embedding) for GPU time. The app stays responsive even while heavy background work is running. (This feature is not yet fully complete, though)
+    *   "Content-based" semantic search was silently returning text-search results after the recent refactor and now correctly produces real semantic matches again.
+    *   "Find similar" search (asking for files similar to a given file) was failing for files on remote or VFS-mounted drives and silently falling back to a plain text search. Fixed.
+*  **Background Embedding Computation:**
+    *   Images module now has a new automatic background scheduler that computes missing embeddings every 10 minutes (configurable via `embedding_update_interval_minutes` and `embedding_update_batch_size` in `config.yaml`). Files added to your library are indexed in the background so they become searchable almost immediately, instead of waiting for the next manual batch run.
+*  **Bug Fixes:**
+    *   "Show full search description" was returning an empty modal. Now displays the full metadata payload used to compute the file's search embeddings.
+    *   Files with no computed embeddings yet (e.g. newly added files) were appearing in the result list as if they had a real score, making sort-by-rating unreliable. Such files are now hidden from the list and counted separately so the user can see what is still being processed in the background.
+    *   TwoLevelCache was reloading the same disk shard on every read, causing unnecessary repeated I/O. Added an in-memory cache so after the first read of a shard, subsequent reads are served from RAM.
+*  **UI & Themes:**
+    *   Added a new "Matrix" theme with falling katakana rain, green-on-black phosphor colors and occasional glitch bursts on images. Available alongside the existing Light, Dark and Solarized options.
+    *   Status bar now reports `"Showed X of Y files in Zs. N file(s) still unindexed."` when some files in a folder are still being indexed in the background, making it clearer what is happening.
+
+### Version 0.4.3 (15.07.2026) 
+*  **Remote Severs Support:**
+    *   Now the project could also fetch and play data from the remote servers. For now the remote servers could only be added manually by editing `project_data/config.yaml` file. To support remote servers all four major modules were completely refactored with use of [pyfilesystem2](https://github.com/pyfilesystem/pyfilesystem2) library in replace of typical `os` based file manipulation commands. Because of this major change external modules (WebSearch, YouTube) will not be able to work properly until the new way of working with files is adapted there. 
+*  **Removed hash dependency:**
+    *   To avoid expensive hash computations, especially for files that are stored on the remote server, the application now uses a new `file_path`-based key to find the score or (for example) play count history instead of the previous `file_hash`-based key approach. Unfortunately, this means that if you have moved or renamed files in your library, the application will not be able to find the score you have previously gave to that file. To mitigate this loss of highly important data, now each time you score a file (or when we migrate the score from the old database to the new one), the application will create new file in `project_data/memory` that contains all the metadata we were able to obtain about the file at the time of scoring. This includes but not limited to actual file path at the moment of scoring, the tags and fingerprint of the file generated by the appropriate embedding model, textual description of the file generated by the omni model, information from the associated `.meta` if it exists, and the score itself. Only the data from that `memory/` folder will be used for training the evaluator model from now on, while the scores in the DB used only for fast search and filtering routines. This way, even though the file_path->score association might be lost, the application will still be able to remember what kind of data was scored how and appropriately reevaluate the same kind of data to the same score after the evaluator model is retrained.
+*  **Text Embedder change:**
+    *   Transformers library had a major security issue and have to be upgraded to version `transformers>=5.5.0`, unfortunately that's means that old `jina-embeddings-v3` text embedding model is no longer supported because of compatibility issues. So for now `Qwen/Qwen3-Embedding-0.6B` text embedding model is used instead.
+
+**HIGHLY IMPORTANT!** Before moving to this version create a backup of your project database file in  `project_data/project.db` to avoid losing any of important data. Then remove 'project_data/migrations' folder completely and run the application. The application will automatically create a new migrations folder and migrate your database to the new version. 
+
+
 ### Version 0.4.2 (12.06.2026)
 *   **Files Handling Refactor:**
     *   Files are now shared with single route `files/` instead of having separate routes for each module. This simplifies the codebase and makes it easier to maintain.

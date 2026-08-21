@@ -13,7 +13,7 @@ docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest
 |-----------|----------------|
 | `test_config_loader.py` | `${VAR:-default}` substitution, plain `$VAR`, missing env vars, nested YAML, invalid YAML |
 | `test_caching.py` | `RAMCache` TTL & thread-safety; `DiskCache` round-trip, TTL, corrupted-shard recovery, atomic writes, warming callback, write-back; `TwoLevelCache` RAM-first / disk-fallback |
-| `test_embedding_proxy.py` | `quantize_embedding()` — zero embedding, output length, alphabet, histogram-equalisation, similar/orthogonal embeddings, CLAP (512-dim) and SigLIP (768-dim) |
+| `test_metadata_proxy.py` | `quantize_embedding()` — zero embedding, output length, alphabet, histogram-equalisation, similar/orthogonal embeddings, typical model dimensions |
 | `test_file_manager.py` | `resolve_subpath()` — valid paths, None/empty, `../`, multi-hop, URL-decoded & double-encoded traversal, absolute escape, symlinks; `get_folder_structure()` — missing dir, extension counting, subfolder totals |
 | `test_common_filters.py` | `_normalize_text()` — accent stripping, separator normalisation, case folding; `filter_by_text(mode='file-name')` — exact-match boost, fuzzy match, unicode, empty query, unknown mode |
 | `test_task_manager.py` | Task submission, FIFO order, exception handling (worker survives), cancel running/queued tasks, pause/resume, history, `get_state()` structure |
@@ -36,26 +36,31 @@ docker-compose -f tests/docker-compose.test.yml run --rm anagnorisis-test pytest
 These run the `__main__` blocks of each subprocess worker to verify model loading and inference produce valid output.
 
 ```
-python3 -m src.text_embedder
-python3 -m src.image_embedder
-python3 -m src.audio_embedder
 python3 -m src.omni_descriptor
 python3 -m src.universal_evaluator
-python3 -m modules.text.engine
-python3 -m modules.images.engine
-python3 -m modules.music.engine
-python3 -m modules.videos.engine   # no embedding model; tests metadata extraction
 python3 -m src.recommendation_engine
 python3 -m src.share_api
 ```
+
+The three per-modality embedders and the four per-module engines no longer exist —
+one model and one engine replaced them. They have no `__main__` self-tests yet;
+what is worth covering instead is:
+
+- `src.omni_embedder` — load the model, embed one file of each media type, check
+  the dimension and that the CPU query tower agrees with the GPU worker (they
+  must produce interchangeable vectors, or search silently stops matching).
+- `src.content_search` — embed and compare a known file; confirm the cache key
+  written matches the one the embedding proxy rebuilds.
 
 ### TODO — Structural improvements (future work)
 
 - **Migrate `__main__` scripts to pytest** so model tests produce structured pass/fail output and can be filtered with `-k`.
 - **Shared test fixtures** — create `tests/fixtures/` with one real JPEG, WAV, and TXT file reused across all engine tests instead of generating synthetic data per test.
 - **Two-tier CI** — run Tier 1 & 3 tests in GitHub Actions on every push (no GPU needed); keep Tier 2 as manual Docker-only tests.
-- **`modules/videos/engine.py` `__main__` test** — videos module is the only engine not yet covered by a Tier 2 run script; add metadata-extraction test similar to images/music.
-- **`src/metadata_search.py` integration test** — test the full `generate_full_description()` pipeline (metadata → proxy → Jina → description) on a known file, verifying caching on second call.
+- **`src/omni_embedder.py` self-test** — the checks listed under Tier 2 above; the CPU/GPU agreement check in particular is load-bearing and currently only verified by hand.
+- **`src/metadata/search.py` integration test** — the full `generate_full_description()` pipeline (extractor → proxy → embedder → description) on a known file, verifying caching on the second call.
+- **A GPU-isolation regression test** — assert that no search path invokes the GPU worker. This is easy to check by stubbing `OmniEmbedder._execute` to raise, and easy to break accidentally.
+- **`src/media_types` coverage** — the registry rejects duplicate extensions across types and derives each module's `media_formats`; both are startup-critical and untested.
 
 ---
 

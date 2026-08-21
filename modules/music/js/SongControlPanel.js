@@ -11,6 +11,7 @@ class SongControlPanel {
         this.playlistManager = playlistManager;
         this.DEFAULT_COVER_IMAGE = "static/images/128x128.png";
         this.currentSongHash = null;
+        this.currentSongFilePath = null;
         this.currentSongScore = null;
         this.showSongRatingTimeout = null;
         this.starRatingComponent = null;
@@ -104,6 +105,12 @@ class SongControlPanel {
         const clickPercentage = (clickX / progressBarWidth) * 100;
         this.songProgressElement.val(clickPercentage);
         const audioDuration = this.audioPlayer.duration;
+        // Guard against seeking before the media has loaded (duration is NaN),
+        // e.g. when the source failed to load — setting currentTime to a
+        // non-finite value throws an uncaught TypeError.
+        if (!isFinite(audioDuration)) {
+            return;
+        }
         this.audioPlayer.currentTime = (clickPercentage / 100) * audioDuration;
     }
 
@@ -114,9 +121,9 @@ class SongControlPanel {
         this.starRatingComponent.rating = score;
         this.starRatingComponent.updateAllContainers();
 
-        if (updateServer && this.currentSongHash) {
-            console.log(`Calling server to set '${this.currentSongHash}' song rating: ${score}`);
-            this.socket.emit('emit_music_page_set_song_rating', { hash: this.currentSongHash, score: score });
+        if (updateServer && this.currentSongFilePath) {
+            console.log(`Calling server to set '${this.currentSongFilePath}' song rating: ${score}`);
+            this.socket.emit('emit_set_file_rating', { file_path: this.currentSongFilePath, rating: score });
         }
     }
 
@@ -126,6 +133,7 @@ class SongControlPanel {
     updateSongInfo(song) {
         // Initially, song contains only file_path info.
         this.currentSongHash = null;
+        this.currentSongFilePath = song.file_path;
         // Optionally, show a loading state here.
         this.songLabelElement.text(`Loading song details...`);
 
@@ -151,7 +159,7 @@ class SongControlPanel {
             this.songCoverElement.attr("src", song.image || this.DEFAULT_COVER_IMAGE);
 
             // Report the server that song is playing to update the last play time.
-            this.socket.emit('emit_music_page_song_start_playing', this.currentSongHash);
+            this.socket.emit('emit_music_page_song_start_playing', { file_path: this.currentSongFilePath });
           })
           .catch((error) => {
             console.error("Failed to fetch song details:", error);
@@ -212,15 +220,15 @@ class SongControlPanel {
 
     nextSong(has_ended = false, update_score = true) {
         const songControlPanel = this;
-        if (this.currentSongHash != null && update_score) {
+        if (this.currentSongFilePath != null && update_score) {
             if (has_ended)
                 this.socket.emit('emit_music_page_set_song_play_rate', {
-                    "hash": songControlPanel.currentSongHash, 
+                    "file_path": songControlPanel.currentSongFilePath,
                     "skip_score_change": +1
                 });
             else
                 this.socket.emit('emit_music_page_set_song_play_rate', {
-                    "hash": songControlPanel.currentSongHash, 
+                    "file_path": songControlPanel.currentSongFilePath,
                     "skip_score_change": -1
                 });
         }

@@ -57,10 +57,17 @@ def weighted_shuffle(scores, temperature=1.0):
         scores (list or np.array): List of scores for each item.
         temperature (float): Temperature parameter to adjust randomness.
         order (str): 'most-relevant' for descending order, 'least-relevant' for ascending order.
+
+    NaN scores (an unscored item) sort last rather than poisoning the result.
+    Left in place, a NaN makes every comparison against it False, which breaks
+    the sort's ordering invariant and silently returns an arbitrary permutation
+    of the *scored* items too; in the sampling branch it turns the probability
+    sum into NaN and degrades every item to a uniform draw.
     """
     remaining = list(range(len(scores)))
     indices = []
     scores = np.array(scores, dtype=np.float64)  # Use float64 for stability
+    scores = np.nan_to_num(scores, nan=-np.inf)
 
     if temperature == 0:
         # Strict mode: sort remaining indices by their scores in descending order
@@ -129,7 +136,7 @@ class EmbeddingGatheringCallback:
             percent = (num_extracted / num_total) * 100
 
             # Show the status
-            self.show_status_function(f"Extracted {self.name} embeddings for {num_extracted}/{num_total} ({percent:.2f}%) files.")
+            self.show_status_function(f"Resolving {self.name} embeddings for {num_extracted}/{num_total} ({percent:.2f}%) files.")
             self.last_shown_time = current_time
 
 

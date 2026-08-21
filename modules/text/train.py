@@ -6,10 +6,11 @@ Exposes get_training_pairs() so that universal_train.py can collect
 """
 
 import os
+from importlib_metadata import Deprecated
 import numpy as np
 from omegaconf import OmegaConf
 
-
+@Deprecated("As all user's ratings are now stored in the single database table 'FilesLibrary', this function is no longer needed. Use get_training_pairs() from src/universal_train.py instead.")
 def get_training_pairs(cfg, text_embedder, status_callback=None):
     """
     Yield (chunk_embeddings, user_rating) pairs from user-rated text files.
@@ -71,15 +72,9 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     # Good for summary-based training or when raw file content is impractical.
     # -------------------------------------------------------------------------
     if embedding_method == "metadata":
-        from modules.text.engine import TextSearch
-        from src.metadata_search import MetadataSearch
+        from src.metadata.search import get_metadata_search
 
-        engine = TextSearch(cfg=cfg)
-        engine.initiate(
-            models_folder=cfg.main.embedding_models_path,
-            cache_folder=cfg.main.cache_path,
-        )
-        meta_search = MetadataSearch(engine=engine)
+        meta_search = get_metadata_search(cfg)
 
         for i, entry in enumerate(entries):
             if entry.file_path is None:
@@ -89,7 +84,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
                 continue
             try:
                 description = meta_search.generate_full_description(
-                    fp, media_folder=media_dir, generate_desc_if_not_in_cache=False
+                    fp, generate_desc_if_not_in_cache=False
                 )
                 if not description or len(description.strip()) < 10:
                     continue

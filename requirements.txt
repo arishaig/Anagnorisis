@@ -12,7 +12,8 @@ torchaudio
 send2trash
 Pillow
 requests
-transformers==4.51.0
+#transformers==4.51.0
+transformers>=5.5.0
 huggingface-hub
 tqdm
 opencv-python-headless
@@ -40,8 +41,15 @@ bitsandbytes>=0.46.1
 accelerate
 librosa 
 soundfile
+av  # video decoding for the omni embedder
+imageio-ffmpeg  # encodes sampled video frames for the embedder
 minicpmo
 onnx
 hyperpyyaml
 diffusers
 onnxruntime
+fs
+fs-s3fs
+fs.smbfs
+fs.sshfs
+fs.webdavfs

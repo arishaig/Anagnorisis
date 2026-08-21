@@ -3,7 +3,6 @@ import numpy as np
 import modules.images.db_models as db_models
 # import src.scoring_models        # Removed: ImageEvaluator training is no longer used
 # from sklearn.model_selection import train_test_split  # Removed
-from modules.images.engine import ImageSearch  # ImageEvaluator removed — only ImageSearch needed
 import os
 # import pickle  # Removed
 # import torch   # Removed
@@ -31,9 +30,14 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     """
     Yield (chunk_embeddings, user_rating) pairs from user-rated images.
 
-    Uses the "metadata" strategy: generates a text description for each image
-    via MetadataSearch (filename + cached OmniDescriptor summary + internal
-    metadata) and embeds it with the shared text_embedder.
+    User ratings now live in the shared FilesLibrary table (keyed by file_path,
+    stored as a full VFS URL), consistent with modules/text and the rest of the
+    framework.
+
+    NOTE: Training of the universal evaluator now reads from the durable
+    memory/ folder (see modules/train/universal_train.py::_gather_from_memory),
+    so this function is no longer called by the training pipeline. It is kept
+    for backwards-compatibility / direct invocation only.
 
     Parameters
     ----------
@@ -46,18 +50,19 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     ------
     (np.ndarray of shape [chunks, dim], float)
     """
-    import modules.images.db_models as db_models
-    from modules.images.engine import ImageSearch
-    from src.metadata_search import MetadataSearch
+    import src.db_models as main_db_models
+    from src.metadata.search import get_metadata_search
+    import fs
+    import src.virtual_file_system as vfs
 
     media_dir = getattr(cfg.images, 'media_directory', None)
-    if not media_dir or not os.path.isdir(media_dir):
-        print("[images/train] media_directory not configured or missing, skipping.")
+    if not media_dir:
+        print("[images/train] media_directory not configured, skipping.")
         return
 
     try:
-        entries = db_models.ImagesLibrary.query.filter(
-            db_models.ImagesLibrary.user_rating.isnot(None)
+        entries = main_db_models.FilesLibrary.query.filter(
+            main_db_models.FilesLibrary.user_rating.isnot(None)
         ).all()
     except Exception as exc:
         print(f"[images/train] DB query failed: {exc}")
@@ -72,27 +77,24 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
     if status_callback:
         status_callback(f"images: found {total} user-rated images.")
 
-    engine = ImageSearch(cfg=cfg)
-    engine.initiate(
-        models_folder=cfg.main.embedding_models_path,
-        cache_folder=cfg.main.cache_path,
-    )
-    meta_search = MetadataSearch(engine=engine)
+    meta_search = get_metadata_search(cfg)
 
     for i, entry in enumerate(entries):
-        if entry.file_path is None:
+        if not entry.file_path:
             continue
-        fp = os.path.join(media_dir, entry.file_path)
-        if not os.path.isfile(fp):
+        # entry.file_path is a full VFS URL (e.g. osfs:///mnt/media/images/photo.jpg)
+        try:
+            base_url, path_in_fs = vfs.resolve_base_and_path_from_url(entry.file_path)
+            with fs.open_fs(base_url) as probe_fs:
+                if not probe_fs.exists(path_in_fs):
+                    continue
+        except Exception:
             continue
+
         try:
             description = meta_search.generate_full_description(
-                fp, media_folder=media_dir, generate_desc_if_not_in_cache=False
+                entry.file_path, generate_desc_if_not_in_cache=False
             )
-            # With the embedding proxy, generate_full_description() always includes at
-            # least a fingerprint + tag section for files whose SigLIP embedding is cached,
-            # so a short/empty description typically means the file has no embedding yet
-            # and no cached OmniDescriptor output.  Skip those to avoid noise.
             if not description or len(description.strip()) < 10:
                 continue
             chunk_embeddings = text_embedder.embed_text(description)

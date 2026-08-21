@@ -3,9 +3,42 @@ import json
 import pickle
 import hashlib
 import datetime
+import concurrent.futures
 import torch
 
+import src.virtual_file_system as vfs
+import fs
+import fs.opener
+
 from src.db_models import db
+import logging
+
+# --- LOGGING CONFIGURATION FOR THIS MODULE ---
+# Choose verbosity: 
+#   - logging.DEBUG    (Show all logs, including path resolution and cache hits)
+#   - logging.INFO     (Show standard initialization and milestones)
+#   - logging.WARNING  (Hide standard info, show only warnings/errors)
+#   - logging.CRITICAL (Virtually disable all logging)
+LOG_LEVEL = logging.INFO 
+
+# Create a scoped logger specifically for this module
+logger = logging.getLogger("FileManager")
+logger.setLevel(LOG_LEVEL)
+
+# Prevent double-logging if your main Flask app has a root logger
+logger.propagate = False
+
+# Configure the console handler specifically for this logger
+if not logger.handlers:
+    console_handler = logging.StreamHandler()
+    
+    # Set a simple formatter for console output
+    formatter = logging.Formatter('%(levelname)-5s [%(name)s] %(message)s')
+    console_handler.setFormatter(formatter)
+    
+    logger.addHandler(console_handler)
+# ---------------------------------------------
+
 
 def get_folder_structure(folder_path, media_extensions=None):
     # Check if directory exists and return None if not
@@ -39,7 +72,7 @@ import sys
 
 def open_file_in_folder(file_path):
     file_path = os.path.normpath(file_path)
-    print(f'Opening file with path: "{file_path}"')
+    logger.info(f'Opening file with path: "{file_path}"')
     
     # Assuming file_path is the full path to the file
     folder_path = os.path.dirname(file_path)
@@ -58,9 +91,9 @@ def open_file_in_folder(file_path):
         elif os.environ.get('XDG_CURRENT_DESKTOP') == 'KDE':
           subprocess.run(['dolphin', '--select', abs_path])
         else:
-          print("Unsupported desktop environment. Please add support for your file manager.")
+          logger.warning("Unsupported desktop environment. Please add support for your file manager.")
     else:
-      print("Error: File does not exist.")
+      logger.error("File does not exist.")
 
 
 
@@ -83,7 +116,7 @@ def resolve_subpath(base_dir: str, user_path: str | None) -> Path:
         resolved = candidate.resolve()
         resolved.relative_to(base)  # raises ValueError if outside
     except Exception:
-        raise PathTraversalError(f"Invalid path: {user_path}")
+        raise PathTraversalError(f"[FileManager] Invalid path: {user_path}")
     return resolved
 
 # filters = {
@@ -97,29 +130,15 @@ from src.socket_events import CommonSocketEvents
 import time
 import numpy as np
 from src.utils import convert_size, weighted_shuffle
-from src.caching import TwoLevelCache 
-import threading
-from typing import Dict
+from src.caching import get_two_level_cache
+from src.file_walker import get_file_walker
+import src.db_models as db_models
+from src.db_models import FilesLibrary
 
-_TLC_SINGLETONS: Dict[str, "TwoLevelCache"] = {}
-_TLC_LOCK = threading.Lock()
-
-def get_two_level_cache(cache_dir: str, **kwargs) -> "TwoLevelCache":
-    """
-    Return a shared TwoLevelCache instance for this cache_dir within the process.
-    First caller’s kwargs win; later calls ignore differing kwargs.
-    """
-    abs_dir = os.path.abspath(cache_dir)
-    with _TLC_LOCK:
-        inst = _TLC_SINGLETONS.get(abs_dir)
-        if inst is not None:
-            return inst
-        inst = TwoLevelCache(cache_dir=abs_dir, **kwargs)
-        _TLC_SINGLETONS[abs_dir] = inst
-        return inst
+import fs
 
 class FileManager:
-    def __init__(self, cfg, media_directory, engine=None, module_name="FileManager", media_formats=None, socketio=None, db_schema=None):
+    def __init__(self, app, cfg, media_directory, engine=None, module_name="FileManager", media_formats=None, socketio=None, db_schema=None):
         assert media_directory is not None, "Media directory must be specified"
         assert engine is not None, "Engine must be specified"
         assert socketio is not None, "SocketIO instance must be specified"
@@ -133,22 +152,23 @@ class FileManager:
         self.db_schema = db_schema
         self.engine = engine
 
-        # self.cached_file_list = engine.cached_file_list
-        # self.cached_file_hash = engine.cached_file_hash
-        # self.cached_metadata = engine.cached_metadata
+        # Traversal, the directory cache and server availability are shared
+        # process-wide — see src/file_walker.py.
+        self._walker = get_file_walker(app, cfg)
+        self.servers = self._walker.servers
 
         # Folder tree cache (persisted across many instances of FileManager as a singleton object)
         cache_folder = os.path.join(cfg.main.cache_path, "file_manager")
         self._fast_cache = get_two_level_cache(cache_dir=cache_folder, name="file_manager")
 
-    def show_status(self, message):
-        self.common_socket_events.show_search_status(message)
+    def show_status(self, message, force=False):
+        self.common_socket_events.show_search_status(message, force=force)
 
     def resolve_media_path(self, path):
         """Return the absolute path for the given media directory and relative path."""
         if path == "":
             return self.media_directory
-        return os.path.abspath(os.path.join(self.media_directory, '..', path))
+        return path
 
     def _build_folder_tree_cached(self, path: str, media_extensions: set[str]) -> dict:
         """
@@ -254,92 +274,178 @@ class FileManager:
         return updated
 
     def get_unrated_files(self, evaluator_hash: str | None = None) -> list[str]:
-        """Walk the media directory and return full paths of files that need rating.
+        """Walk all files and return full paths of files that need rating.
 
         A file needs rating if its hash has no DB row, or its DB row has
         model_rating IS NULL, or its model_hash doesn't match evaluator_hash
         (i.e. the model was updated).
 
-        Calls sync_file_paths() first so that moved/renamed files have their
-        DB file_path corrected before the rating lookup.
-
-        Uses the engine's hash cache so repeated calls within a session are fast.
-        Batches DB queries to stay within SQLite's variable limit.
+        Returns:
+            List of full file paths that are unrated or stale-rated.
         """
-        if self.media_directory is None:
-            return []
+        logger.info(f"[FileManager] Checking for unrated files with evaluator hash: {evaluator_hash}")
 
-        self.sync_file_paths()
+        # self.sync_file_paths()
 
-        all_files = self._walk_files_cached(self.media_directory, set(self.media_formats))
+        all_files = self._walk_files_cached("/", set(self.media_formats))
         if not all_files:
             return []
+        
+        logger.info(f"[FileManager] Found {len(all_files)} files in media directory.")
 
-        all_hashes = [self.engine.get_file_hash(f) for f in all_files]
+        # all_hashes = [self.engine.get_file_hash(f) for f in all_files]
 
-        # First occurrence wins for duplicate hashes (e.g. identical files)
-        hash_to_full: dict[str, str] = {}
-        for h, f in zip(all_hashes, all_files):
-            if h is not None and h not in hash_to_full:
-                hash_to_full[h] = f
+        # # First occurrence wins for duplicate hashes (e.g. identical files)
+        # hash_to_full: dict[str, str] = {}
+        # for h, f in zip(all_hashes, all_files):
+        #     if h is not None and h not in hash_to_full:
+        #         hash_to_full[h] = f
 
-        disk_hashes = list(hash_to_full.keys())
-        if not disk_hashes:
-            return []
+        # disk_hashes = list(hash_to_full.keys())
+        # if not disk_hashes:
+        #     return []
 
-        # Find which disk hashes are already rated with the current model
-        rated_hashes: set[str] = set()
-        stale_hashes: set[str] = set()
+        # Find which files are already rated with the current model
+        rated_paths: list[str] = []
+        stale_paths: list[str] = []
         BATCH = 500
-        for i in range(0, len(disk_hashes), BATCH):
-            batch = disk_hashes[i:i + BATCH]
+        for i in range(0, len(all_files), BATCH):
+            batch = all_files[i:i + BATCH]
 
             # Up-to-date: rated with the current model hash — exclude entirely
-            q_current = self.db_schema.query.with_entities(self.db_schema.hash).filter(
-                self.db_schema.hash.in_(batch),
-                self.db_schema.model_rating.isnot(None),
+            q_current = FilesLibrary.query.with_entities(FilesLibrary.file_path).filter(
+                FilesLibrary.file_path.in_(batch),
+                FilesLibrary.model_rating.isnot(None),
             )
             if evaluator_hash is not None:
-                q_current = q_current.filter(self.db_schema.model_hash == evaluator_hash)
-            rated_hashes.update(row[0] for row in q_current.all())
+                q_current = q_current.filter(FilesLibrary.model_hash == evaluator_hash)
+            rated_paths.extend(row.file_path for row in q_current.all())
 
             # Stale: rated but with a different (outdated) model hash
             if evaluator_hash is not None:
-                q_stale = self.db_schema.query.with_entities(self.db_schema.hash).filter(
-                    self.db_schema.hash.in_(batch),
-                    self.db_schema.model_rating.isnot(None),
-                    self.db_schema.model_hash != evaluator_hash,
+                q_stale = FilesLibrary.query.with_entities(FilesLibrary.file_path).filter(
+                    FilesLibrary.file_path.in_(batch),
+                    FilesLibrary.model_rating.isnot(None),
+                    FilesLibrary.model_hash != evaluator_hash,
                 )
-                stale_hashes.update(row[0] for row in q_stale.all())
+                stale_paths.extend(row.file_path for row in q_stale.all())
+
+        # Create list of new files that are not in the DB at all 
+        new_files = list(set(all_files) - set(rated_paths) - set(stale_paths))
 
         # Unrated files (no rating at all) come first, stale-rated files second
-        unrated = [hash_to_full[h] for h in disk_hashes if h not in rated_hashes and h not in stale_hashes]
-        stale   = [hash_to_full[h] for h in disk_hashes if h in stale_hashes]
-        return unrated + stale
+        logger.info(f"[FileManager] Found {len(rated_paths)} rated files, {len(stale_paths)} stale-rated files, and {len(new_files)} new files.")
+        return new_files + stale_paths
 
-    def list_all_files(self) -> list[str]:
-        """Return all media file paths currently on disk (no DB, no hashing)."""
-        if self.media_directory is None:
-            return []
-        return self._walk_files_cached(self.media_directory, set(self.media_formats))
+    # def list_all_files(self) -> list[str]:
+    #     """Return all media file paths currently on disk, local files only.
+
+    #     OmniDescriptor's auto-description pipeline downloads the entire file,
+    #     so this walker is restricted to `osfs:///` mounts. Remote servers are
+    #     intentionally excluded — their descriptions are populated only by the
+    #     MemorySystem path when the user explicitly rates a remote file.
+    #     """
+    #     if self.media_directory is None:
+    #         return []
+    #     return self._walk_files_cached("osfs:///mnt/media/", set(self.media_formats))
+
+    # def get_folders(self, path = ""):
+    #     # current_path = self.resolve_media_path(path)
+    #     # folder_path = os.path.relpath(current_path, os.path.join(self.media_directory, '..')) + os.path.sep
+    #     folder_path = self.resolve_media_path(path)
+
+    #     # Extract subfolders structure from the path into a dict
+    #     #folders = get_folder_structure(self.media_directory, self.media_formats)
+
+    #     # Build from cache-aware walker
+    #     media_exts = set(self.media_formats)
+    #     folders = self._build_folder_tree_cached(self.media_directory, media_exts)
+
+    #     # Extract main folder name
+    #     main_folder_name = os.path.basename(os.path.normpath(self.media_directory))
+    #     folders['name'] = main_folder_name
+
+    #     return {"folders": folders, "folder_path": folder_path}
 
     def get_folders(self, path = ""):
-        current_path = self.resolve_media_path(path)
-        folder_path = os.path.relpath(current_path, os.path.join(self.media_directory, '..')) + os.path.sep
-        print('folder_path', folder_path)
-
-        # Extract subfolders structure from the path into a dict
-        #folders = get_folder_structure(self.media_directory, self.media_formats)
-
-        # Build from cache-aware walker
+        # Determine the active folder path
+        active_path = self.resolve_media_path(path)
         media_exts = set(self.media_formats)
-        folders = self._build_folder_tree_cached(self.media_directory, media_exts)
 
-        # Extract main folder name
-        main_folder_name = os.path.basename(os.path.normpath(self.media_directory))
-        folders['name'] = main_folder_name
+        # def _get_file_counts(dir_path: str):
+        #     """Returns (num_files, total_files) using the cached filesystem scanners."""
+        #     try:
+        #         files, subdirs = self._list_dir_cached(dir_path, media_exts)
+        #         num_files = len(files)
+        #         # Only perform deep recursive walking for local osfs to prevent network delays
+        #         if dir_path.startswith("osfs://"):
+        #             total_files = num_files + sum(len(self._walk_files_cached(sd, media_exts)) for sd in subdirs)
+        #         else:
+        #             total_files = num_files
+        #         return num_files, total_files
+        #     except Exception:
+        #         return 0, 0
 
-        return {"folders": folders, "folder_path": folder_path}
+        def _is_ancestor_or_self(parent_path: str, child_path: str) -> bool:
+            """Checks if parent_path is an ancestor of or equal to child_path."""
+            p = parent_path.rstrip('/') + '/'
+            c = child_path.rstrip('/') + '/'
+            return c.startswith(p)
+
+        def _build_tree_node(display_name: str, full_path: str, node_type="folder") -> dict:
+            """Recursively builds the tree nodes, expanding only along the active path."""
+            formatted_full_path = full_path.rstrip('/') + '/'
+            
+            try:
+                base_url, path_in_fs = vfs.resolve_base_and_path_from_url(formatted_full_path)
+            except Exception:
+                base_url, path_in_fs = "", "/"
+
+            # Standardize directory paths with a trailing slash
+            if path_in_fs and not path_in_fs.endswith('/'):
+                path_in_fs += '/'
+
+            # num_files, total_files = _get_file_counts(full_path)
+
+            node = {
+                "display_name": display_name,
+                "full_path": formatted_full_path,
+                "base_url": base_url,
+                "path_in_fs": path_in_fs,
+                "type": node_type,
+                # "num_files": num_files,
+                # "total_files": total_files,
+                "subfolders": []
+            }
+
+            # Only expand and fetch subfolders if this directory lies on the active path
+            if _is_ancestor_or_self(full_path, active_path):
+                _, subdirs = self._list_dir_cached(full_path, media_exts)
+                for sd in subdirs:
+                    sd_name = os.path.basename(sd.rstrip('/'))
+                    child_node = _build_tree_node(sd_name, sd, "folder")
+                    node["subfolders"].append(child_node)
+
+            return node
+
+        # Assemble the root structure
+        root_node = {
+            "display_name": "All Files",
+            "full_path": "/",
+            "type": "root",
+            "subfolders": []
+        }
+
+        # Populate the first level (servers) dynamically using allowed roots
+        for server in self.servers:
+            display_name = server.name
+            server_node = _build_tree_node(display_name, server.url, "server")
+
+            server_node["is_available"] = self._walker.availability(server.url)
+
+            root_node["subfolders"].append(server_node)
+
+        return {"folders": root_node, "folder_path": active_path}
     
     def _get_hashes_with_progress(self, files: list[str]) -> list[str]:
         """
@@ -364,51 +470,11 @@ class FileManager:
 
         return hashes
 
-    def _list_dir_cached(self, path: str, media_exts: set[str]) -> tuple[list[str], list[str]]:
-        """
-        Return (files_in_dir, subdirs) for path using TwoLevelCache keyed by dir mtime.
-        """
-        try:
-            st = os.stat(path, follow_symlinks=False)
-        except FileNotFoundError:
-            return [], []
-        except Exception:
-            return [], []
+    def _list_dir_cached(self, path: str, media_exts: set[str], active_fs=None) -> tuple[list[str], list[str]]:
+        return self._walker.list_dir(path, media_exts, active_fs=active_fs)
 
-        ext_sig = ",".join(sorted(media_exts)) if media_exts else "-"
-        key = f"MEDIAFILES_OF:{path}|{st.st_mtime_ns}|{ext_sig}"
-
-        cached = self._fast_cache.get(key)
-        if cached is not None:
-            return cached
-
-        files: list[str] = []
-        subdirs: list[str] = []
-        try:
-            with os.scandir(path) as it:
-                for e in it:
-                    try:
-                        if e.is_file(follow_symlinks=False):
-                            ext = os.path.splitext(e.name)[1].lower()
-                            if not media_exts or ext in media_exts:
-                                files.append(os.path.join(path, e.name))
-                        elif e.is_dir(follow_symlinks=False):
-                            subdirs.append(e.path)
-                    except Exception:
-                        # Skip entries that change/disappear mid-scan
-                        continue
-        except Exception:
-            return [], []
-
-        self._fast_cache.set(key, (files, subdirs))
-        return files, subdirs
-
-    def _walk_files_cached(self, root: str, media_exts: set[str]) -> list[str]:
-        files, subdirs = self._list_dir_cached(root, media_exts)
-        all_files = list(files)
-        for d in subdirs:
-            all_files.extend(self._walk_files_cached(d, media_exts))
-        return all_files
+    def _walk_files_cached(self, path: str, media_exts: set[str]) -> list[str]:
+        return self._walker.walk(path, media_exts, status_callback=self.show_status)
 
     def get_files(self, path = "", pagination = 0, limit = 100, text_query = None, seed = None, filters: dict = {}, get_file_info = None, mode = 'file-name', order = 'most-relevant', temperature = 0):
 
@@ -421,24 +487,26 @@ class FileManager:
         if seed is not None:
             np.random.seed(int(seed))
 
+
+
+
         # If path is not specified, use the media directory as default
         #if path == "": 
         #    path = os.path.realpath(self.media_directory)
 
         # Directory Traversal Prevention ---
-        resolve_subpath(self.media_directory, path)
+        #resolve_subpath(self.media_directory, path)
+        logger.debug(f"get_files path: {path}" + (" (Empty)" if path == "" else ""))
         
         current_path = self.resolve_media_path(path)
+        logger.debug(f"get_files current_path: {current_path}")
 
-        
-        folder_path = os.path.relpath(current_path, os.path.join(self.media_directory, '..')) + os.path.sep
-        print('get_files', 'folder_path', folder_path)
+        folder_path = current_path
+        # folder_path = os.path.relpath(current_path, os.path.join(self.media_directory, '..')) + os.path.sep
+        # logger.debug(f"get_files folder_path: {folder_path}")
 
         self.show_status(f"Searching for files in '{folder_path}'.")
 
-        all_files = []
-        
-        # Walk with cache 1.5s for 66k files
         all_files = self._walk_files_cached(current_path, self.media_formats)
 
         if len(all_files) == 0:
@@ -461,11 +529,10 @@ class FileManager:
             # use first word as filter name
             filter_name = text_query
 
-
             # If there is a file path used as a query, this file exists and within specified formats, sort files by similarity to that file
-            if os.path.isfile(text_query) and text_query.lower().endswith(tuple(self.media_formats)):
+            if vfs.is_file_exists(text_query) and text_query.lower().endswith(tuple(self.media_formats)):
                 if filters["by_file"] is not None:
-                    scores = filters["by_file"](all_files, text_query) # Set the filter for other components
+                    scores = filters["by_file"](all_files, text_query)
             
             # Custom sorts
             elif filter_name and (filter_name not in ["by_file", "by_text"]) and (filter_name in filters):
@@ -491,10 +558,32 @@ class FileManager:
         if type(scores) is np.ndarray:
             scores = scores.tolist()
 
-        # print(f"Scores calculated for {len(scores)} files.")
+        
 
-        # print(f"Sorting {len(all_files)} files with temperature={temperature}, order={order}...")
-        indices = weighted_shuffle(scores, temperature=temperature) 
+        # logger.info(f"Scores calculated for {len(scores)} files.")
+
+        # logger.info(f"Sorting {len(all_files)} files with temperature={temperature}, order={order}...")
+        def is_valid_pair(i):
+            score = scores[i]
+            file_path = all_files[i]
+            if score is None or file_path is None:
+                return False
+            # NaN scores mean the file couldn't be embedded (e.g. empty file with
+            # no cache entry under generate_embs_if_not_in_cache=False). They are
+            # NOT valid search results and would also break JSON serialization
+            # downstream (NaN is non-standard JSON and crashes JSON.parse() in JS).
+            # Filter them out exactly like None.
+            if isinstance(score, float) and score != score:   # NaN != NaN → True
+                return False
+            return True
+
+        # Discard unscored files BEFORE sorting, not after. Ranking them and then
+        # dropping them wastes the work, and any unscored file left in the input
+        # used to drag the scored ones out of order along with it.
+        valid = [i for i in range(len(all_files)) if is_valid_pair(i)]
+        unindexed_count = len(all_files) - len(valid)
+
+        indices = weighted_shuffle([scores[i] for i in valid], temperature=temperature)
 
         if order == 'most-relevant':
             pass  # already sorted in descending order
@@ -503,93 +592,130 @@ class FileManager:
         else:
             raise ValueError("order must be 'most-relevant' or 'least-relevant'")
 
-        sorted_files = [all_files[i] for i in indices]
-        sorted_scores = [scores[i] for i in indices]
+        sorted_files = [all_files[valid[j]] for j in indices]
+        sorted_scores = [scores[valid[j]] for j in indices]
 
         # Select files for the current page
         page_files = sorted_files[pagination:pagination+limit]
         page_files_scores = sorted_scores[pagination:pagination+limit]
         
-        # print(f'page_files {pagination}:{limit}', page_files)
+        # logger.info(f'page_files {pagination}:{limit}', page_files)
 
-        self.show_status(f"Gathering hashes for {len(page_files)} files.")
-        page_hashes = self._get_hashes_with_progress(page_files) #[self.engine.get_file_hash(file_path) for file_path in page_files]
+        # self.show_status(f"Gathering hashes for {len(page_files)} files.")
+        # page_hashes = self._get_hashes_with_progress(page_files) #[self.engine.get_file_hash(file_path) for file_path in page_files]
 
         # Extract DB data for the relevant batch of files
-        self.show_status(f"Extracting database info for relevant files.")
-        db_items = self.db_schema.query.filter(self.db_schema.hash.in_(page_hashes)).all()
-        db_items_map = {item.hash: item for item in db_items}
+        # self.show_status(f"Extracting database info for relevant files.")
+        # db_items = self.db_schema.query.filter(self.db_schema.hash.in_(page_hashes)).all()
+        # db_items_map = {item.hash: item for item in db_items}
 
-        # Keep DB path in sync if file was moved/renamed for all files in the page
-        self.show_status(f"Syncing database paths for relevant files.")
-        db_updated = False
-        for ind, full_path in enumerate(page_files):
-            file_hash = page_hashes[ind]
-            if file_hash in db_items_map:
-                db_item = db_items_map[file_hash]
-                if db_item.file_path != full_path:
-                    db_item.file_path = full_path
-                    db_updated = True
+        # # Keep DB path in sync if file was moved/renamed for all files in the page
+        # self.show_status(f"Syncing database paths for relevant files.")
+        # db_updated = False
+        # for ind, full_path in enumerate(page_files):
+        #     file_hash = page_hashes[ind]
+        #     if file_hash in db_items_map:
+        #         db_item = db_items_map[file_hash]
+        #         if db_item.file_path != full_path:
+        #             db_item.file_path = full_path
+        #             db_updated = True
 
-        if db_updated:
-            db.session.commit()
+        # if db_updated:
+        #     db.session.commit()
 
         files_data = []
         
         # self.show_status(f"Extracting metadata for {len(page_files)} files.")
 
-        for ind, full_path in enumerate(page_files):
-            self.show_status(f"Extracting metadata for {ind+1}/{len(page_files)} files.")
+        # Parse and open the target filesystem
+        base_url, path_in_fs = vfs.resolve_base_and_path_from_url(current_path)
+        logger.debug(f"Resolved base_url: {base_url}, path_in_fs: {path_in_fs}")
 
-            file_path = full_path 
-            basename = os.path.basename(full_path)
-            file_size = os.path.getsize(full_path)
-            file_hash = page_hashes[ind]
+        # Maintain a temporary connection pool to keep execution fast and handle different servers
+        opened_fses = {}
+        try:
+            for ind, full_path in enumerate(page_files):
+                self.show_status(f"Extracting metadata for {ind+1}/{len(page_files)} files.")
 
-            #audiofile_data = self.get_metadata(full_path)
+                file_base_url, path_in_fs = vfs.resolve_base_and_path_from_url(full_path)
+                logger.debug(f"Processing file: {full_path}, base_url: {file_base_url}, path_in_fs: {path_in_fs}")
 
-            
-            #resolution = get_image_resolution(full_path)  # Returns a tuple (width, height)
-            
-            user_rating = None
-            model_rating = None
-            last_played = "Never"
-
-            # if file_hash in db_items_map:
-            #     db_item = db_items_map[file_hash]
-            #     user_rating = db_item.user_rating
-            #     model_rating = db_item.model_rating
-
-            #     # convert datetime to string
-            #     if db_item.last_played:
-            #         last_played_timestamp = db_item.last_played.timestamp() if db_item.last_played else None
-            #         last_played = time_difference(last_played_timestamp, datetime.datetime.now().timestamp())
+                # Open or reuse the filesystem connection
+                if file_base_url not in opened_fses:
+                    opened_fses[file_base_url] = fs.open_fs(file_base_url)
                 
-            data = {
-                "type": "file",
-                "full_path": full_path,
-                "file_path": file_path,
-                "base_name": basename,
-                "hash": file_hash,
-                "file_size": convert_size(file_size),
-                "file_info": get_file_info(full_path, file_hash),
-                "has_meta": os.path.exists(full_path + ".meta"),
-                "search_score": page_files_scores[ind]
+                my_fs = opened_fses[file_base_url]
 
-                # "user_rating": user_rating,
-                # "model_rating": model_rating,
-                # "audiofile_data": audiofile_data,
-                # "length": convert_length(audiofile_data['duration']),
-                # "last_played": last_played
-            }
-            files_data.append(data)
-        
+                # Get Size and modification timestamp (ns)
+                info = my_fs.getinfo(path_in_fs, namespaces=['details'])
+                file_size = info.size
+                logger.debug(f"File size for {full_path}: {file_size} bytes")
+
+                basename = os.path.basename(path_in_fs)
+
+                # file_hash = page_hashes[ind]
+
+                #audiofile_data = self.get_metadata(full_path)
+
+                
+                #resolution = get_image_resolution(full_path)  # Returns a tuple (width, height)
+                
+                user_rating = None
+                model_rating = None
+                last_played = "Never"
+
+                # if file_hash in db_items_map:
+                #     db_item = db_items_map[file_hash]
+                #     user_rating = db_item.user_rating
+                #     model_rating = db_item.model_rating
+
+                #     # convert datetime to string
+                #     if db_item.last_played:
+                #         last_played_timestamp = db_item.last_played.timestamp() if db_item.last_played else None
+                #         last_played = time_difference(last_played_timestamp, datetime.datetime.now().timestamp())
+
+                # Clean NaN values from the scores, to avoid serialization issues
+                score = page_files_scores[ind]
+                if isinstance(score, float) and score != score:
+                    score = None
+                    
+                data = {
+                    "type": "file",
+                    "full_path": full_path,
+                    "file_path": full_path,
+                    "base_url": base_url,
+                    "path_in_fs": path_in_fs,
+                    "base_name": basename,
+                    # "hash": file_hash,
+                    "file_size": convert_size(file_size),
+                    "file_info": get_file_info(full_path),
+                    "has_meta": my_fs.exists(path_in_fs + '.meta'),
+                    "search_score": score
+                }
+                files_data.append(data)
+        finally:
+            # Safely close all opened connection pools
+            for opened_fs in opened_fses.values():
+                try:
+                    opened_fs.close()
+                except Exception:
+                    pass
+
         # Save all extracted metadata to the cache
         # self.cached_metadata.save_metadata_cache()
 
-        self.show_status(f'{len(sorted_files)} files processed in {time.time() - start_time:.4f} seconds.')
+        # elapsed = time.time() - start_time
+        # if unindexed_count > 0:
+        #     self.show_status(
+        #         f'Showed {len(sorted_files)} of {len(all_files)} files in {elapsed:.2f}s. '
+        #         f'{unindexed_count} file(s) still unindexed.'
+        #     )
+        # else:
+        #     self.show_status(
+        #         f'Processed {len(sorted_files)} files in {elapsed:.2f}s.'
+        #     )
 
-        print(f'get_files returning {len(files_data)} files data.')
+        # logger.info(f'get_files returning {len(files_data)} files data.')
 
         # Check if all the data is serializable and if not print the non-serializable data
         for file_data in files_data:
@@ -597,11 +723,24 @@ class FileManager:
                 json.dumps(file_data, indent=2)
             except (TypeError, OverflowError) as e:
                 raise ValueError(f'Non-serializable data found in file: {file_data["full_path"]}, error: {e}')
+            
+
+        # Show final status
+        elapsed = time.time() - start_time
+        final_summary = (
+            f'Showed {len(sorted_files)} of {len(all_files)} files in {elapsed:.2f}s. '
+            f'{unindexed_count} file(s) still unindexed.'
+            if unindexed_count > 0
+            else f'Processed {len(sorted_files)} files in {elapsed:.2f}.'
+        )
+        self.show_status(final_summary, force=True)   # force=True bypasses throttle
+
+        logger.info(f'get_files returning {len(files_data)} files data.')
 
         return {
             "files_data": files_data, 
             "folder_path": folder_path, 
             "total_files": len(sorted_files), 
             "all_files_paths": sorted_files
-            }
+        }
 

@@ -17,7 +17,7 @@ A **module** is a self-contained folder inside `modules/` that adds a new media 
 cp -r modules/_module_template modules/my_module
 
 # 2. Rename all occurrences of "example" / "Example" to your module name
-#    (in serve.py, db_models.py, engine.py, page.html, js/main.js)
+#    (in serve.py, db_models.py, page.html, js/main.js)
 
 # 3. Add a config section in config.yaml
 # 4. Restart the application — done!
@@ -30,7 +30,6 @@ cp -r modules/_module_template modules/my_module
 ```
 modules/my_module/
 ├── serve.py               # REQUIRED — entry point, socket events, Flask routes
-├── engine.py              # REQUIRED for media modules — search / embedding engine
 ├── page.html              # REQUIRED — frontend HTML (injected into base.html)
 ├── js/
 │   └── main.js            # REQUIRED — frontend JavaScript (ES module)
@@ -46,17 +45,30 @@ modules/my_module/
 
 ## Step-by-step guide
 
-### 1. Implement the search engine (`engine.py`)
+### 1. Declare a media type — there is no engine to write
 
-Subclass `BaseSearchEngine` and implement the abstract methods:
+Modules used to subclass `BaseSearchEngine` and wrap their own embedding model. They no longer do: one multimodal model embeds every kind of content, and one `ContentSearch` engine serves all of them.
 
-- `model_name` — HuggingFace model ID (or `None`)
-- `cache_prefix` — unique string for your cache files
-- `_load_model_and_processor(local_model_path)` — load the ML model
-- `_process_single_file(file_path)` — produce a `torch.Tensor` embedding
-- `_get_metadata(file_path)` — return a dict of file metadata
-- `_get_db_model_class()` — return your SQLAlchemy model class
-- `_get_model_hash_postfix()` — return a short string identifying model config (used in cache key)
+Your module declares which **media type** it shows, in `config.defaults.yaml`:
+
+```yaml
+my_module:
+  media_directory: osfs:///mnt/media/my_module/
+  media_types: [images]     # a type defined in media_types/media_types.yaml
+```
+
+and asks for the shared engine, scoped to that type:
+
+```python
+from src.content_search import get_content_search
+
+search_engine = get_content_search(cfg, 'images')
+search_engine.initiate(models_folder=cfg.main.embedding_models_path)
+```
+
+That gives you `process_files()`, `process_text()`, `compare()`, `get_metadata()`, `get_file_hash()` and the embedding cache, with no per-module code.
+
+If your module handles a kind of content no existing type covers, add it to [`media_types/media_types.yaml`](../../media_types/media_types.yaml) — extensions, which internal-metadata reader to use, and optionally a tag vocabulary in `media_types/tags/`. If it also needs a *new* way of extracting internal metadata, add a reader to `src/metadata/extractors/`.
 
 The base class provides: model downloading, two-level caching, hash computation, and batch processing with progress callbacks.
 
@@ -161,7 +173,8 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
 
     Args:
         cfg:             OmegaConf config object
-        text_embedder:   TextEmbedder instance — call text_embedder.embed(text) → tensor
+        text_embedder:   the shared embedder — call text_embedder.embed_text(text),
+                         which returns [n_chunks, dim]
         status_callback: Optional callable for progress reporting — status_callback("message")
 
     Yields:
@@ -179,7 +192,7 @@ def get_training_pairs(cfg, text_embedder, status_callback=None):
 
         # Build a text description of the file (metadata, .meta content, etc.)
         description = build_description(entry)  # your logic here
-        embedding = text_embedder.embed(description)
+        embedding = text_embedder.embed_text(description)
 
         yield embedding, entry.user_rating
 ```

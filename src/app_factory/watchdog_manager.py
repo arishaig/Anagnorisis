@@ -42,9 +42,7 @@ class WatchdogManager:
             # Proxy singletons — imported lazily so the watchdog doesn't force them
             # to be created if they were never used.
             _proxy_modules = {
-                'TextEmbedder':       ('src.text_embedder',      'TextEmbedder'),
-                'ImageEmbedder':      ('src.image_embedder',     'ImageEmbedder'),
-                'AudioEmbedder':      ('src.audio_embedder',     'AudioEmbedder'),
+                'OmniEmbedder':       ('src.omni_embedder',      'OmniEmbedder'),
                 'OmniDescriptor':     ('src.omni_descriptor',    'OmniDescriptor'),
                 'UniversalEvaluator': ('src.universal_evaluator','UniversalEvaluator'),
             }

@@ -1,0 +1,388 @@
+# Zero-shot tag vocabulary for the "audio" media type.
+#
+# Used by the embedding proxy: each tag is embedded once with the media type's
+# embedding model, and the tags closest to a file's embedding are written into
+# its metadata description. That gives files a searchable, ratable text
+# representation before the (much slower) OmniDescriptor pass reaches them.
+#
+# Rows are written as "- [a, b, c]" purely for compactness — the loader
+# flattens them into one flat list of tags.
+#
+# Extend freely. Changing the vocabulary changes its hash, which invalidates
+# every cached proxy section and, through it, every metadata embedding that
+# contained one — correct, but it means a full background re-index. Prefer
+# batching edits over trickling them in.
+
+# Genres
+- [jazz, blues, classical music, rock music, pop music, folk music, country music, R&B, soul music]
+- [hip-hop, rap, electronic music, ambient music, heavy metal, punk rock, reggae, latin music]
+- [indie rock, alternative rock, dance music, house music, techno, trance, drum and bass, dubstep]
+- [gospel music, opera, musical theatre, world music, African music, flamenco, bossa nova, bluegrass]
+- [new age music, lo-fi music, synthwave, grunge, progressive rock, psychedelic music, funk music]
+- [disco, swing, bebop, smooth jazz, celtic music, k-pop, j-pop, chiptune, vaporwave]
+
+# Moods & emotions
+- [happy music, sad music, melancholic, energetic music, calm music, peaceful, intense music]
+- [romantic music, nostalgic, aggressive music, relaxing music, uplifting music, dark atmosphere]
+- [mysterious, playful music, dramatic music, ethereal, hypnotic, groovy, cheerful, tense]
+- [emotional, dreamy, powerful, gentle, meditative, suspenseful, triumphant, melancholy, joyful]
+
+# Instruments
+- [guitar, electric guitar, acoustic guitar, piano, violin, drums, bass guitar, saxophone, trumpet]
+- [cello, flute, synthesizer, organ, harp, oboe, clarinet, trombone, banjo, ukulele, mandolin]
+- [percussion, choir, vocals, male vocals, female vocals, strings ensemble, brass section, woodwinds]
+- [keyboard, harmonica, accordion, sitar, didgeridoo, bagpipes, turntable, theremin]
+
+# Tempo & energy
+- [fast tempo, slow tempo, medium tempo, high energy, low energy, rhythmic, syncopated rhythm]
+- [steady beat, complex rhythm, sparse arrangement, dense arrangement, rubato, a cappella]
+
+# Production & style
+- [live recording, studio recording, orchestral, minimalist, complex composition, loud, quiet]
+- [distorted, clean sound, heavy reverb, echo effect, atmospheric, cinematic music, acoustic]
+- [instrumental, lo-fi recording, high production quality, experimental music, improvisation]
+
+# Era & decade
+- [1950s music, 1960s music, 1970s music, 1980s music, 1990s music, 2000s music, 2010s music, 2020s music]
+- [vintage sound, retro style, classic recording, golden age of music, modern production, contemporary music]
+
+# Use case & context
+- [workout music, gym music, study music, focus music, sleep music, relaxation music, meditation music, spa music]
+- [party music, club music, dance floor, background music, driving music, road trip, dinner music, elevator music]
+- [film score, movie soundtrack, video game music, commercial jingle, wedding music, church music, concert music]
+- [love song, breakup song, protest song, drinking song, lullaby, children's music, holiday music, battle anthem]
+
+# Vocal style
+- [clean vocals, raspy vocals, breathy vocals, powerful vocals, delicate vocals, operatic singing, nasal vocals]
+- [rap vocals, sung rap, spoken word, beatboxing, scatting, yodeling, throat singing, overtone singing, humming]
+- [soprano, alto, tenor, baritone, bass voice, falsetto, head voice, chest voice, mixed voice, whistle register]
+- [duet, trio, full choir, backing vocals, call and response, harmonizing, layered vocals, unison]
+
+# Extended subgenres
+- [trap music, drill music, cloud rap, conscious rap, mumble rap, old school hip-hop, boom bap, lo-fi hip-hop, phonk]
+- [deep house, tech house, progressive house, nu-disco, tropical house, acid house, UK garage, grime, jungle]
+- [death metal, black metal, doom metal, power metal, thrash metal, metalcore, djent, post-metal, sludge metal, grindcore]
+- [shoegaze, post-rock, math rock, noise rock, stoner rock, emo, post-hardcore, screamo, indie pop, dream pop, slowcore]
+- [americana, outlaw country, contemporary country, honky tonk, country pop, folk rock, alt-country, western swing]
+- [cumbia, salsa, merengue, bachata, tango, samba, mambo, cha-cha, reggaeton, dembow, moombahton]
+- [afrobeats, afropop, highlife, amapiano, dancehall, soca, calypso, zouk, fado, chanson, musette]
+- [hindustani classical, carnatic music, qawwali, bollywood, city pop, j-rock, mandopop, k-indie, anatolian rock]
+
+# Sound characteristics
+- [bass heavy, bass light, treble dominant, midrange focused, sub bass, punchy bass, deep rumble, boomy]
+- [warm tone, cold tone, bright sound, dark sound, thin sound, full bodied, wide soundstage, intimate sound]
+- [heavily compressed, wide dynamic range, stereo wide, mono recording, spatial audio, binaural, 8D audio]
+- [dry mix, long decay, short reverb, spring reverb, plate reverb, room sound, cave reverb]
+- [chorus effect, flanger, phaser, tremolo effect, vibrato, pitch modulation, ring modulation, bit crusher, glitch]
+
+# Specific instruments & sounds
+- [808 bass, synthesizer bass, electric piano, Rhodes piano, Fender Rhodes, Wurlitzer, clavinet, Mellotron]
+- [drum machine, programmed beats, live drums, brushed drums, jazz brushes, electronic percussion, breakbeat, amen break]
+- [slide guitar, wah pedal, distorted guitar, clean guitar, fingerpicking, arpeggios, power chords, tremolo picking, tapping]
+- [string quartet, chamber music, symphony orchestra, big band, jazz combo, brass band, marching band, gamelan, steel band]
+- [vocoder, talk box, pitch shifted vocals, auto-tuned, looped sample, vinyl crackle, tape hiss, lo-fi cassette, field recording]
+- [banjo picking, dobro, lap steel, pedal steel, dulcimer, hammered dulcimer, hurdy-gurdy, zither, mbira, handpan]
+
+# Speech & non-music audio — most audio on a personal machine is not a song
+- [speech, monologue, dialogue, conversation, narration, voice recording, voice memo]
+- [podcast, podcast episode, interview, panel discussion, talk show, radio broadcast, news bulletin]
+- [audiobook, audiobook chapter, lecture, university lecture, seminar, webinar, presentation, tutorial]
+- [meeting recording, conference call, phone call recording, voicemail, dictation, court recording]
+- [stand-up comedy, sketch comedy, storytelling, poetry reading, sermon, prayer, speech to a crowd]
+- [guided meditation, hypnosis session, affirmation, sleep story, breathing exercise, yoga class]
+- [language lesson, pronunciation drill, vocabulary practice, phrasebook audio, dictation exercise]
+- [text to speech, synthetic voice, robot voice, voice assistant, automated announcement, IVR menu]
+
+# Voice character
+- [male speaker, female speaker, child speaker, elderly speaker, multiple speakers, single speaker]
+- [calm voice, excited voice, angry voice, whispering, shouting, laughing, crying, sighing]
+- [fast speech, slow speech, monotone delivery, expressive delivery, hesitant speech, confident speech]
+- [accented speech, regional accent, formal register, casual register, slang, technical jargon]
+
+# Spoken languages
+- [English speech, Spanish speech, French speech, German speech, Italian speech, Portuguese speech]
+- [Russian speech, Ukrainian speech, Polish speech, Czech speech, Dutch speech, Swedish speech]
+- [Chinese speech, Mandarin, Cantonese, Japanese speech, Korean speech, Hindi speech, Arabic speech]
+- [Turkish speech, Hebrew speech, Greek speech, Vietnamese speech, Thai speech, Indonesian speech]
+- [multilingual recording, code switching, translated audio, dubbed audio, subtitled reading]
+
+# Ambience & field recordings
+- [rain sounds, thunderstorm, wind, ocean waves, river stream, waterfall, forest ambience, birdsong]
+- [city traffic, street noise, crowd noise, cafe ambience, office ambience, airport announcement]
+- [train passing, car engine, motorcycle engine, aeroplane cabin, subway, construction noise]
+- [fireplace crackling, keyboard typing, page turning, footsteps, door closing, clock ticking]
+- [white noise, pink noise, brown noise, fan noise, air conditioner hum, room tone, silence]
+- [animal sounds, dog barking, cat meowing, insects at night, frogs, farm animals, whale song]
+
+# Sound design & effects
+- [sound effect, foley, impact sound, whoosh, explosion sound, gunshot sound, glass breaking]
+- [notification sound, alarm, ringtone, doorbell, beep, error sound, success chime, button click]
+- [riser, drop, transition effect, drone tone, atmospheric pad, sub drop, reverse cymbal, stinger]
+- [game audio, level music, boss theme, menu music, victory jingle, footstep foley, ui sound]
+- [film score cue, trailer music, sting, bumper, jingle, logo sound, podcast intro, outro music]
+
+# Recording context & quality
+- [studio quality, home recording, phone recording, laptop microphone, lapel microphone, handheld recorder]
+- [clean recording, noisy recording, background hum, hiss, clipping, distortion artefact, low bitrate]
+- [stereo recording, dual mono, unbalanced levels, quiet recording, loud recording]
+- [echoey room, small room, large hall, outdoor recording, wind noise, plosives, sibilance]
+- [voice over music, crosstalk, interruption, pause, dead air, cut off recording, incomplete take]
+
+# Musical structure & performance
+- [intro, verse, chorus, bridge, outro, solo section, breakdown, build up, refrain]
+- [acoustic version, live version, demo recording, rehearsal take, remix, mashup, cover version]
+- [karaoke track, instrumental version, backing track, stem, isolated vocals, acapella version]
+- [loop, one shot sample, drum loop, bassline loop, chord progression, riff, motif, ostinato]
+
+# Key, mode & harmony
+- [major key, minor key, modal, atonal, dissonant, consonant, chromatic, pentatonic, blues scale]
+- [simple harmony, complex harmony, jazz chords, drone harmony, counterpoint, fugue]
+- [4/4 time, 3/4 waltz time, 6/8 time, odd time signature, polyrhythm, swung rhythm, straight rhythm]
+
+# More genres & scenes
+- [ambient techno, minimal techno, hardstyle, gabber, breakcore, hyperpop, glitch hop, trip hop]
+- [jazz fusion, cool jazz, free jazz, big band swing, ragtime, dixieland, latin jazz, nu jazz]
+- [neoclassical, baroque music, romantic era, minimalism, chamber orchestra, solo piano]
+- [dub, roots reggae, ska, rocksteady, afrobeat, soukous, rai, klezmer, balkan brass]
+- [country rock, southern rock, blues rock, hard rock, glam rock, garage rock, surf rock, rockabilly]
+- [industrial, ebm, darkwave, coldwave, goth rock, post-punk, no wave, noise music, drone metal]
+- [christian rock, gospel choir, worship music, chant, gregorian chant, devotional music, hymn]
+- [children's song, nursery rhyme, lullaby music, educational song, cartoon theme, holiday song]
+- [military march, national anthem, fanfare, ceremonial music, circus music, elevator muzak]
+
+# Era, medium & provenance
+- [vinyl rip, cassette rip, CD rip, radio rip, live bootleg, demo tape, remastered, lossless]
+- [AI generated music, midi rendering, chiptune tracker, soundfont, sampled orchestra, virtual instrument]
+- [mono era recording, early stereo, digital era, lo-fi bedroom production, high budget production]
+
+# Genres in depth — electronic
+- [ambient drone, dark ambient, space ambient, berlin school, new beat, italo disco, eurodance]
+- [big beat, nu skool breaks, florida breaks, electro house, fidget house, bassline house]
+- [future house, bass house, melodic house, afro house, organic house, microhouse, dub techno]
+- [detroit techno, birmingham techno, acid techno, industrial techno, peak time techno, hard techno]
+- [psytrance, goa trance, progressive trance, uplifting trance, vocal trance, hard trance, tech trance]
+- [liquid drum and bass, neurofunk, jump up, techstep, darkstep, ragga jungle, atmospheric dnb]
+- [future bass, melodic dubstep, riddim, brostep, colour bass, wave, hardwave, phonk house]
+- [synthpop, electropop, electroclash, minimal wave, italo house, french touch, filter house]
+- [idm, braindance, drill and bass, chiptune breakcore, clicks and cuts, microsound]
+- [footwork, juke, baltimore club, jersey club, ghetto house, kuduro, gqom, singeli, batida]
+
+# Genres in depth — rock, metal & punk
+- [alternative metal, nu metal, rap metal, groove metal, speed metal, heavy psych, stoner doom]
+- [progressive metal, technical death metal, melodic death metal, blackgaze, atmospheric black metal]
+- [symphonic metal, folk metal, viking metal, pirate metal, pagan metal, gothic metal, doom rock]
+- [hardcore punk, melodic hardcore, skate punk, pop punk, street punk, oi, crust punk, d-beat]
+- [emo revival, midwest emo, mathcore, metalcore breakdown, deathcore]
+- [garage punk, proto punk, glam metal, hair metal, arena rock, classic rock, southern gothic rock]
+- [jangle pop, power pop, britpop, madchester, shoegaze revival, dream rock, slacker rock]
+- [krautrock, space rock, psychedelic folk, acid rock, blues revival, roots rock, heartland rock]
+
+# Genres in depth — hip-hop, r&b & soul
+- [east coast hip-hop, west coast hip-hop, southern hip-hop, midwest rap, uk rap, french rap]
+- [jazz rap, abstract hip-hop, experimental hip-hop, political rap, horrorcore, gangsta rap]
+- [neo soul, contemporary r&b, quiet storm, new jack swing, funk soul, northern soul, motown sound]
+- [alternative r&b, pbr&b, bedroom r&b, soul ballad, doo wop, gospel soul, blue eyed soul]
+- [afroswing, amapiano vocal, alte, uk drill, brooklyn drill, plugg, rage rap, jerk rap]
+
+# Genres in depth — folk, world & traditional
+- [appalachian folk, sea shanty, work song, protest folk, singer songwriter, anti-folk, freak folk]
+- [celtic folk, nordic folk, balkan folk, romani music, klezmer dance, tarantella, polka, mazurka]
+- [andean music, mariachi, ranchera, norteno, corrido, bolero, son cubano, guaracha, timba]
+- [fado portuguese, flamenco cante, rebetiko, arabesque, dabke, chaabi, gnawa, berber music]
+- [carnatic vocal, hindustani raga, bhangra, ghazal, sufi qawwali, thumri, tabla solo, sitar raga]
+- [gagaku, min-yo, enka, gamelan degung, pinpeat, mor lam, luk thung, dangdut, kroncong]
+- [taarab, mbalax, benga, chimurenga, isicathamiya, mbaqanga, kwaito, coupe decale, zouglou]
+- [throat singing tuvan, joik, aboriginal songline, powwow drum, andean panpipes, alphorn]
+
+# Genres in depth — jazz, classical & score
+- [hard bop, post bop, modal jazz, spiritual jazz, avant garde jazz, third stream, gypsy jazz]
+- [bossa jazz, samba jazz, afro cuban jazz, jazz funk, acid jazz, jazz rock fusion, smooth fusion]
+- [gregorian plainchant, renaissance polyphony, baroque concerto, classical sonata, romantic symphony]
+- [impressionist classical, serialism, twelve tone, aleatoric, spectral music, musique concrete]
+- [opera aria, choral requiem, oratorio, cantata, art song, lieder, piano nocturne, etude, prelude]
+- [film score orchestral, minimal score, tension cue, action cue, emotional cue, end credits music]
+- [video game soundtrack, chiptune soundtrack, orchestral game score, ambient game score]
+
+# Musical form & tempo terms
+- [largo, adagio, andante, moderato, allegro, presto, accelerando, ritardando, rubato tempo]
+- [sonata form, rondo, theme and variations, canon, round, suite, overture, interlude, coda]
+- [call and answer, question and answer phrasing, antiphonal, unison melody, layered melody]
+- [very slow tempo, slow tempo ballad, mid tempo groove, upbeat tempo, driving tempo, frantic tempo]
+- [60 bpm, 90 bpm, 120 bpm, 128 bpm, 140 bpm, 174 bpm, half time feel, double time feel]
+
+# Instruments in depth
+- [twelve string guitar, nylon string guitar, baritone guitar, lap harp, autoharp, psaltery]
+- [upright bass, fretless bass, slap bass, synth bass, moog bass, 808 kick, sub bass tone]
+- [hammond organ, church organ, pipe organ, reed organ, harmonium, celesta, glass harmonica]
+- [modular synth, analog synth, fm synth, wavetable synth, granular synth, arpeggiator, sequencer]
+- [timpani, gong, tam tam, chimes, triangle, castanets, maracas, shaker, cowbell, woodblock]
+- [taiko drum, tabla, darbuka, bodhran, cajon, udu, talking drum, frame drum, steelpan]
+- [shakuhachi, dizi, xiao, ney, duduk, kaval, ocarina, tin whistle, uilleann pipes, bombarde]
+- [erhu, morin khuur, nyckelharpa, hardanger fiddle, viola da gamba, lyre, kanun, santoor]
+- [saw wave lead, pluck lead, brass stab, string swell, choir pad, bell tone, organ stab]
+
+# Production, mixing & mastering
+- [heavily quantised, loose timing, humanised groove, sidechain pumping, ducking, gated reverb]
+- [parallel compression, limiter pushed, transient shaped, saturated tape, tube warmth, bit reduction]
+- [wide stereo image, narrow mix, mid side processing, haas effect, panned hard left, panned hard right]
+- [dry vocal, doubled vocal, stacked harmonies, formant shifted, pitch corrected, hard tuned]
+- [layered drums, sampled breaks, chopped sample, time stretched, granular texture, resampled]
+- [analog noise floor, digital clipping, aliasing, dropout, wow and flutter, tape stop, vinyl skip]
+- [loud master, quiet master, dynamic master, brickwalled, reference mix, rough mix, final master]
+
+# Occasions, moods & use
+- [wedding first dance, funeral music, graduation march, birthday song, anniversary song, lullaby set]
+- [coffee shop playlist, dinner party background, cocktail lounge, poolside, beach sunset, road trip mix]
+- [study focus, deep work, coding music, reading music, writing music, exam revision, pomodoro timer]
+- [warm up track, high intensity interval, cool down, stretching, running cadence, cycling cadence]
+- [bedtime routine, power nap, deep sleep, insomnia relief, tinnitus masking, anxiety relief]
+- [kids playtime, story time, classroom activity, nursery background, birthday party for children]
+- [horror atmosphere, suspense build, jump scare sting, chase sequence, victory fanfare, defeat theme]
+- [nostalgic mood, bittersweet, hopeful, melancholic ballad, angry aggressive, playful quirky]
+
+# Podcast & spoken formats
+- [true crime podcast, comedy podcast, news podcast, tech podcast, history podcast, science podcast]
+- [business podcast, self help podcast, health podcast, sports podcast, film podcast, gaming podcast]
+- [solo episode, co-hosted episode, guest interview, listener questions, roundtable, live show recording]
+- [ad read, sponsor segment, intro segment, outro segment, episode trailer, series recap, bonus episode]
+
+# Provenance, tooling & artefacts
+- [recorded on phone, recorded in car, recorded outdoors, recorded in studio, recorded on stage]
+- [zoom call audio, teams call audio, discord recording, twitch stream audio, youtube rip audio]
+- [daw project bounce, ableton export, fl studio export, logic export, reaper render, audacity export]
+- [midi playback, soundfont render, tracker module, sid chip, game boy sound, nes sound, snes sound]
+- [speech to text source, dubbed over, machine dubbed, voice cloned, AI cover, AI vocal, stem separated]
+
+# Regional & national music scenes
+- [american folk, canadian indie, mexican regional, brazilian mpb, argentine tango orchestra]
+- [colombian vallenato, chilean nueva cancion, cuban son, puerto rican bomba, dominican perico ripiao]
+- [british invasion, manchester scene, bristol sound, glasgow indie, welsh choir, irish trad session]
+- [french chanson, belgian pop, dutch gabber, german schlager, austrian volksmusik, swiss folk]
+- [italian cantautore, spanish copla, portuguese folk, greek laiko, cypriot folk, maltese folk]
+- [nordic noir score, swedish pop, norwegian black metal, finnish humppa, icelandic post rock]
+- [polish disco polo, hungarian folk, romanian manele, bulgarian choir, serbian turbo folk]
+- [russian bard song, ukrainian folk, georgian polyphony, armenian duduk music, azerbaijani mugham]
+- [turkish pop, persian classical, israeli mizrahi, lebanese pop, egyptian shaabi, iraqi maqam]
+- [nigerian afrobeats, ghanaian hiplife, south african house, kenyan gengetone, congolese rumba]
+- [ethiopian jazz, malian blues, senegalese mbalax, algerian rai, tunisian mezoued, sudanese pop]
+- [indian film music, pakistani qawwali, bangladeshi baul, nepali folk, sri lankan baila]
+- [chinese pop, taiwanese pop, hong kong cantopop, mongolian folk, tibetan chant, uyghur muqam]
+- [japanese city pop, japanese folk, japanese noise, korean trot, korean traditional, okinawan music]
+- [thai pop, vietnamese pop, filipino opm, malaysian pop, singaporean indie, cambodian rock]
+- [australian pub rock, new zealand maori music, hawaiian slack key, polynesian chant, samoan choir]
+
+# Dance styles the music is for
+- [waltz dance, foxtrot, quickstep, tango dance, cha cha, rumba dance, samba dance, jive]
+- [salsa dancing, bachata dancing, kizomba, zouk dance, merengue dancing, cumbia dancing]
+- [swing dance, lindy hop, charleston, jitterbug, boogie woogie, rock and roll dance]
+- [breakdancing, popping, locking, house dance, voguing, krumping, tutting, shuffling]
+- [ballet class music, contemporary dance, jazz dance, tap dance, irish dance, flamenco dance]
+- [belly dance, bollywood dance, folk circle dance, line dance, square dance, morris dance]
+
+# Vocal detail
+- [lead vocal, backing vocal stack, gang vocals, group chant, spoken interlude, whispered vocal]
+- [belting, crooning, growling vocal, screaming vocal, fry scream, guttural vocal, clean chorus]
+- [melisma, vibrato heavy, straight tone, breathy tone, nasal tone, chest dominant, head dominant]
+- [child choir, boys choir, gospel choir vocals, barbershop harmony, chamber choir, mass choir]
+- [duet vocals, call and response vocals, harmony thirds, octave doubling, unison chorus]
+- [rap flow fast, rap flow slow, triplet flow, melodic rap, sung hook, ad libs, punchline delivery]
+- [foreign language vocals, nonsense syllables, vocalise, scat singing, mouth percussion, humming melody]
+
+# Lyrical themes
+- [love song lyrics, heartbreak lyrics, longing, jealousy, devotion, friendship, family theme]
+- [party lyrics, celebration, drinking song lyrics, nightlife, dancing all night, summer anthem]
+- [political lyrics, protest lyrics, social commentary, anti war, freedom theme, justice theme]
+- [religious lyrics, praise lyrics, spiritual seeking, existential, mortality, afterlife theme]
+- [nature imagery, city imagery, travel theme, homesickness, nostalgia lyrics, childhood memories]
+- [struggle and hustle, success and wealth, revenge theme, loneliness, depression theme, hope theme]
+- [storytelling lyrics, character narrative, fictional world, science fiction lyrics, fantasy lyrics]
+- [humorous lyrics, satirical lyrics, novelty song, parody song, nonsense lyrics, tongue twister]
+- [instrumental no lyrics, wordless vocals, sampled speech, spoken poetry over music]
+
+# Sound categories & everyday audio
+- [kitchen sounds, cooking sounds, water running, dishes clattering, microwave beep, kettle boiling]
+- [bathroom sounds, shower running, toilet flush, hairdryer, electric shaver, toothbrush]
+- [office sounds, printer, photocopier, phone ringing, keyboard clacking, mouse clicking, chair squeak]
+- [workshop sounds, drill, saw, hammering, sanding, welding, grinder, vacuum cleaner, lawnmower]
+- [garden sounds, sprinkler, wind chimes, leaves rustling, gravel footsteps, gate creaking]
+- [school sounds, classroom chatter, school bell, playground noise, sports whistle, cheering crowd]
+- [shop sounds, checkout beep, trolley, coins, cash register, crowd murmur, announcement over speakers]
+- [hospital sounds, heart monitor, ambulance siren, police siren, fire alarm, smoke detector beep]
+- [baby crying, baby laughing, children playing, dog whining, cat purring, bird in cage, aquarium bubbles]
+- [engine starting, engine idling, horn honking, brakes squealing, tyres on gravel, door slam]
+
+# Technical descriptors
+- [44100 hz, 48000 hz, 96 khz, 8 bit audio, 16 bit audio, 24 bit audio, mp3 compressed, lossless flac]
+- [very short clip, short clip, few minutes, long recording, hour long, multi hour recording]
+- [fade in, fade out, abrupt start, abrupt end, silence at start, silence at end, gap in middle]
+- [constant volume, varying volume, sudden loud peak, very quiet passage, dynamic contrast]
+- [single channel, dual channel, surround mix, binaural recording, ambisonic, spatial mix]
+- [click track audible, count in, studio chatter, false start, retake, take number announced]
+
+# Artists' eras & sonic references
+- [sixties beat group, seventies stadium sound, eighties gated drums, nineties grunge production]
+- [two thousands pop rock, twenty tens edm drop, twenty twenties hyperpop, retro revival production]
+- [early hip-hop breakbeat, golden age boom bap, blog era rap, streaming era pop, tiktok hook]
+- [crooner era, girl group era, boy band pop, teen pop, adult contemporary, easy listening]
+- [college radio, indie label sound, major label polish, bedroom demo, garage tape, field demo]
+
+# Music for media
+- [advert jingle, radio imaging, station ident, podcast bed, news sting, sports broadcast theme]
+- [corporate background, explainer video music, tutorial background, slideshow music, wedding video music]
+- [documentary underscore, nature documentary music, historical documentary music, true crime bed]
+- [trailer braams, trailer risers, epic hybrid orchestral, action percussion, tension strings]
+- [comedy underscore, whimsical music, quirky plucks, cartoon slapstick, circus waltz, silent film piano]
+- [horror strings, atonal horror, drone horror, music box horror, distorted lullaby, dissonant cluster]
+
+# Practice, education & reference
+- [scale practice, arpeggio practice, metronome click, tuning note, guitar tuning, piano tuning]
+- [warm up exercise, sight reading practice, ear training, interval training, chord recognition]
+- [music lesson recording, masterclass, rehearsal with conductor, sectional rehearsal, sound check]
+- [backing track for practice, play along, slowed down for learning, looped section for practice]
+
+# Radio, broadcast & archive
+- [radio jingle, radio advert, traffic report, weather forecast audio, station announcement]
+- [archival broadcast, historic speech, wartime broadcast, moon landing audio, news archive]
+- [emergency broadcast, public announcement, air traffic control, police radio, ham radio, morse code]
+- [shortwave radio, numbers station, static interference, radio tuning, signal dropout]
+
+# Additional moods
+- [serene, contemplative, wistful, yearning, defiant, rebellious, menacing, ominous, foreboding]
+- [euphoric, ecstatic, blissful, tender, comforting, reassuring, solemn, reverent, ceremonial]
+- [restless, agitated, frantic, chaotic, unsettling, eerie, uncanny, hypnotic groove, trance inducing]
+- [sensual, seductive, flirtatious, confident, swaggering, cocky, humble, sincere, heartfelt]
+- [absurd, silly, cheeky, ironic, deadpan, campy, theatrical, dramatic swell, cinematic scope]
+- [minimal and sparse, dense and busy, lush and layered, raw and stripped, polished and glossy]
+
+# Structure of the file itself
+- [full song, song fragment, intro only, chorus only, loop ready, stem file, multitrack bounce]
+- [album full length, ep, single, mixtape, compilation, dj mix, radio edit, extended mix, club mix]
+- [live set recording, festival set, boiler room style set, radio session, acoustic session]
+- [interview plus music, mixed programme, continuous mix, tracklist announced, crossfaded tracks]
+
+# Further instrument and timbre detail
+- [muted trumpet, growl saxophone, flutter tongue flute, col legno strings, pizzicato strings]
+- [tremolo strings, harmonics on guitar, palm muted guitar, open tuning, drop d tuning, capo used]
+- [fingerstyle guitar, hybrid picking, sweep picking, slap and pop bass, walking bassline]
+- [brushed snare, rimshot, ghost notes, blast beat, four on the floor, shuffle groove, half time drums]
+- [808 hi hats, trap hats, rolled hats, sidestick, clave pattern, tambourine groove, handclaps]
+- [string pad, warm pad, evolving pad, sub bass drone, noise sweep, vinyl crackle layer]
+- [prepared piano, detuned piano, felt piano, upright honky tonk, toy piano, music box tone]
+- [talkbox, vocoder lead, formant lead, supersaw lead, acid bassline, wobble bass, reese bass]
+
+# Perceived setting of the recording
+- [bedroom recording, garage band, rehearsal room, small club, large venue, arena show, stadium show]
+- [church acoustics, cathedral reverb, concert hall acoustics, jazz club intimacy, open air festival]
+- [busking on a street, in a car, on public transport, in a kitchen, in a stairwell, in a bathroom]
+
+# Listener context
+- [background listening, active listening, headphones focused, car stereo, kitchen speaker]
+- [club sound system, festival rig, home cinema, laptop speakers, phone speaker, earbuds]
+
+# Additional descriptors
+- [catchy hook, earworm melody, repetitive loop, evolving arrangement, sudden change, abrupt ending]
+- [builds slowly, immediate impact, sparse intro, big finish, false ending, fade out ending]
+- [danceable, headbanging, singalong, chill out, workout intensity, driving rhythm, hypnotic pulse]
+- [experimental, avant garde, accessible, mainstream, underground, niche, timeless, dated sounding]
+- [well recorded, poorly recorded, amateur performance, virtuoso performance, tight ensemble, loose feel]
+- [in tune, out of tune, rhythmically tight, rhythmically loose, sloppy edit, seamless edit]
