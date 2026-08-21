@@ -1,6 +1,9 @@
 # Drop-in replacement for volotat/Anagnorisis's Dockerfile.
 # Changes from upstream:
-#   1. CPU-only PyTorch (no CUDA wheels) — saves ~5 GB of image size
+#   1. CUDA-enabled PyTorch (cu121 wheels) — every embedder already gates on
+#      torch.cuda.is_available(), so this image runs GPU-accelerated on
+#      talos-omega and transparently falls back to CPU anywhere else (no
+#      NVIDIA driver required to import torch, just to use it)
 #   2. Adds `COPY . /app` so the source is baked in (required for k8s; upstream relies on bind-mount)
 #   3. Removes NVIDIA-specific env vars (unused on CPU)
 
@@ -21,8 +24,10 @@ ENV PATH="/venv/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip
 
-# CPU-only PyTorch — significantly smaller than the CUDA build
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# CUDA-enabled PyTorch (cu121) — needed for GPU accel on talos-omega; larger
+# than the CPU-only build (~5 GB more) but still importable/usable on
+# CPU-only nodes since torch.cuda.is_available() just returns False there
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 COPY requirements.txt /tmp/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
